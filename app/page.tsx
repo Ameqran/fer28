@@ -2,8 +2,12 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import confetti from 'canvas-confetti';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { DISTRICT_PATHS, PORTUGAL_VIEWBOX } from './portugalDistrictPaths';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import MapTiltScene, { type TiltVector } from './MapTiltScene';
+import { ISLAND_INSET_FRAMES, ISLAND_PATHS } from './portugalIslandPaths';
+import { DISTRICT_PATHS } from './portugalDistrictPaths';
+
+type RegionZone = 'mainland' | 'island';
 
 interface PaletteColor {
   id: string;
@@ -27,6 +31,7 @@ interface RegionBlueprint {
     y: number;
   };
   paletteId: string;
+  zone: RegionZone;
 }
 
 interface RegionState extends RegionBlueprint {
@@ -40,11 +45,29 @@ interface DistrictMetaItem {
   number: number;
   icon: string;
   paletteId: string;
+  zone?: RegionZone;
   labelOffset?: {
     x: number;
     y: number;
   };
 }
+
+interface FillParticle {
+  id: number;
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  size: number;
+  spin: number;
+  duration: number;
+  color: string;
+}
+
+const MAP_VIEWBOX = '0 0 620 760';
+const MAP_WIDTH = 620;
+const MAP_HEIGHT = 760;
+const MAINLAND_X_OFFSET = 150;
 
 const PALETTE_COLORS: PaletteColor[] = [
   { id: 'c1', number: 1, regionName: 'Viana do Castelo', hex: '#6A49A2', displayHex: '#6A49A2' },
@@ -65,6 +88,8 @@ const PALETTE_COLORS: PaletteColor[] = [
   { id: 'c16', number: 16, regionName: 'Evora', hex: '#FDBA74', displayHex: '#FDBA74' },
   { id: 'c17', number: 17, regionName: 'Beja', hex: '#C9B458', displayHex: '#C9B458' },
   { id: 'c18', number: 18, regionName: 'Faro', hex: '#E07A5F', displayHex: '#E07A5F' },
+  { id: 'c19', number: 19, regionName: 'Azores', hex: '#8ECAE6', displayHex: '#8ECAE6' },
+  { id: 'c20', number: 20, regionName: 'Madeira', hex: '#F28482', displayHex: '#F28482' },
 ];
 
 const DISTRICT_META: DistrictMetaItem[] = [
@@ -158,9 +183,28 @@ const DISTRICT_META: DistrictMetaItem[] = [
   },
   { key: 'Beja', name: 'Beja', subtitle: 'Golden Fields', number: 17, icon: '🌻', paletteId: 'c17' },
   { key: 'Faro', name: 'Faro', subtitle: 'Algarve Surf Sun', number: 18, icon: '🌊', paletteId: 'c18' },
+  {
+    key: 'Azores',
+    name: 'Azores',
+    subtitle: 'Atlantic Volcano Islands',
+    number: 19,
+    icon: '🌋',
+    paletteId: 'c19',
+    zone: 'island',
+  },
+  {
+    key: 'Madeira',
+    name: 'Madeira',
+    subtitle: 'Levadas & Cliffs',
+    number: 20,
+    icon: '🏝️',
+    paletteId: 'c20',
+    zone: 'island',
+  },
 ];
 
-const DISTRICT_GEOMETRY = DISTRICT_PATHS.reduce<Record<string, (typeof DISTRICT_PATHS)[number]>>((acc, item) => {
+const ALL_PATHS = [...DISTRICT_PATHS, ...ISLAND_PATHS];
+const DISTRICT_GEOMETRY = ALL_PATHS.reduce<Record<string, (typeof ALL_PATHS)[number]>>((acc, item) => {
   acc[item.key] = item;
   return acc;
 }, {});
@@ -183,6 +227,7 @@ const REGION_BLUEPRINTS: RegionBlueprint[] = DISTRICT_META.map((meta) => {
     paletteId: meta.paletteId,
     defaultColor: color.hex,
     path: geometry.path,
+    zone: meta.zone ?? 'mainland',
     label: {
       x: geometry.label.x + (meta.labelOffset?.x ?? 0),
       y: geometry.label.y + (meta.labelOffset?.y ?? 0),
@@ -190,7 +235,7 @@ const REGION_BLUEPRINTS: RegionBlueprint[] = DISTRICT_META.map((meta) => {
   };
 });
 
-const STORAGE_KEY = 'fer28-portugal-map-real-v1';
+const STORAGE_KEY = 'fer28-portugal-map-real-v2';
 
 const createInitialRegions = (): RegionState[] =>
   REGION_BLUEPRINTS.map((region) => ({
@@ -209,9 +254,17 @@ export default function HomePage() {
   const [activePaletteId, setActivePaletteId] = useState<string | null>(null);
   const [history, setHistory] = useState<Array<Record<string, string | null>>>([]);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string } | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string>('Choose a number color, then paint the same district number.');
+  const [statusMessage, setStatusMessage] = useState<string>('Choose a number color, then paint the same numbered region.');
   const [celebrated, setCelebrated] = useState(false);
-  const mapWrapRef = useRef<HTMLDivElement>(null);
+  const [tilt, setTilt] = useState<TiltVector>({ x: 0, y: 0 });
+  const [fillParticles, setFillParticles] = useState<FillParticle[]>([]);
+  const [isPointerDown, setIsPointerDown] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+
+  const mapCanvasRef = useRef<HTMLDivElement>(null);
+  const particleIdRef = useRef(0);
+  const canTiltForDevice = !prefersReducedMotion && !isCoarsePointer;
 
   const activePalette = useMemo(
     () => PALETTE_COLORS.find((item) => item.id === activePaletteId) ?? null,
@@ -249,9 +302,9 @@ export default function HomePage() {
   useEffect(() => {
     if (completion === 100 && !celebrated) {
       setCelebrated(true);
-      setStatusMessage('Perfect map completion! Happy 28th birthday, Fer.');
-      confetti({ particleCount: 190, spread: 100, startVelocity: 45, origin: { x: 0.15, y: 0.72 } });
-      confetti({ particleCount: 190, spread: 100, startVelocity: 45, origin: { x: 0.85, y: 0.72 } });
+      setStatusMessage('Perfect map completion! Mainland + islands painted. Happy 28th birthday, Fer.');
+      confetti({ particleCount: 200, spread: 110, startVelocity: 48, origin: { x: 0.15, y: 0.7 } });
+      confetti({ particleCount: 200, spread: 110, startVelocity: 48, origin: { x: 0.85, y: 0.7 } });
     }
 
     if (completion < 100 && celebrated) {
@@ -259,24 +312,86 @@ export default function HomePage() {
     }
   }, [celebrated, completion]);
 
+  useEffect(() => {
+    const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const coarsePointerQuery = window.matchMedia('(pointer: coarse), (hover: none)');
+
+    const syncMotionPreference = () => setPrefersReducedMotion(reducedMotionQuery.matches);
+    const syncPointerPreference = () => setIsCoarsePointer(coarsePointerQuery.matches);
+
+    syncMotionPreference();
+    syncPointerPreference();
+
+    reducedMotionQuery.addEventListener('change', syncMotionPreference);
+    coarsePointerQuery.addEventListener('change', syncPointerPreference);
+
+    return () => {
+      reducedMotionQuery.removeEventListener('change', syncMotionPreference);
+      coarsePointerQuery.removeEventListener('change', syncPointerPreference);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!canTiltForDevice) {
+      setTilt({ x: 0, y: 0 });
+    }
+  }, [canTiltForDevice]);
+
   const recordHistory = (snapshot: RegionState[]) => {
     setHistory((prev) => [serializeColors(snapshot), ...prev].slice(0, 120));
   };
 
-  const paintRegion = (regionId: string, event: React.MouseEvent<SVGPathElement>) => {
+  const removeFillParticle = (id: number) => {
+    setFillParticles((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const spawnFillParticles = (event: MouseEvent<SVGPathElement>, color: string) => {
+    const wrapper = mapCanvasRef.current;
+    if (!wrapper) {
+      return;
+    }
+
+    const rect = wrapper.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    const freshParticles: FillParticle[] = Array.from({ length: 18 }, (_, index) => {
+      const id = particleIdRef.current + index + 1;
+      const angle = (Math.PI * 2 * index) / 18 + Math.random() * 0.6;
+      const power = 24 + Math.random() * 80;
+      return {
+        id,
+        x,
+        y,
+        dx: Math.cos(angle) * power,
+        dy: Math.sin(angle) * power - 10,
+        size: 5 + Math.random() * 8,
+        spin: -140 + Math.random() * 280,
+        duration: 0.55 + Math.random() * 0.35,
+        color,
+      };
+    });
+
+    particleIdRef.current += freshParticles.length;
+    setFillParticles((prev) => [...prev, ...freshParticles].slice(-260));
+  };
+
+  const paintRegion = (regionId: string, event: MouseEvent<SVGPathElement>) => {
     const region = regions.find((item) => item.id === regionId);
     if (!region || !activePalette) {
-      setStatusMessage('Pick a palette color first, then click the matching numbered district.');
+      setStatusMessage('Pick a palette color first, then click the matching numbered region.');
       return;
     }
 
     if (activePalette.number !== region.number) {
       setStatusMessage(
-        `Color #${activePalette.number} is for ${activePalette.regionName}. Paint district #${activePalette.number}.`,
+        `Color #${activePalette.number} is for ${activePalette.regionName}. Paint region #${activePalette.number}.`,
       );
       updateTooltip(event, `${region.name} • #${region.number}`);
       return;
     }
+
+    spawnFillParticles(event, activePalette.hex);
 
     setRegions((prev) => {
       recordHistory(prev);
@@ -291,7 +406,7 @@ export default function HomePage() {
       recordHistory(prev);
       return prev.map((region) => ({ ...region, currentColor: null }));
     });
-    setStatusMessage('All districts cleared.');
+    setStatusMessage('All regions cleared.');
   };
 
   const autoFill = () => {
@@ -299,7 +414,7 @@ export default function HomePage() {
       recordHistory(prev);
       return prev.map((region) => ({ ...region, currentColor: region.defaultColor }));
     });
-    setStatusMessage('Auto-fill applied to all Portugal districts.');
+    setStatusMessage('Auto-fill applied to mainland + islands.');
   };
 
   const undoLast = () => {
@@ -319,8 +434,8 @@ export default function HomePage() {
     });
   };
 
-  const updateTooltip = (event: React.MouseEvent<SVGPathElement>, regionLabel: string) => {
-    const wrapper = mapWrapRef.current;
+  const updateTooltip = (event: MouseEvent<SVGPathElement>, regionLabel: string) => {
+    const wrapper = mapCanvasRef.current;
     if (!wrapper) {
       return;
     }
@@ -330,6 +445,30 @@ export default function HomePage() {
       y: event.clientY - rect.top - 14,
       label: regionLabel,
     });
+  };
+
+  const updateTilt = (event: MouseEvent<HTMLDivElement>) => {
+    if (!canTiltForDevice || isPointerDown || event.buttons > 0) {
+      return;
+    }
+
+    const wrapper = mapCanvasRef.current;
+    if (!wrapper) {
+      return;
+    }
+
+    const rect = wrapper.getBoundingClientRect();
+    const px = (event.clientX - rect.left) / rect.width;
+    const py = (event.clientY - rect.top) / rect.height;
+
+    setTilt({
+      x: (px - 0.5) * 2,
+      y: (0.5 - py) * 2,
+    });
+  };
+
+  const resetTilt = () => {
+    setTilt({ x: 0, y: 0 });
   };
 
   const activeNumber = activePalette?.number ?? null;
@@ -344,9 +483,9 @@ export default function HomePage() {
           className="rounded-3xl border border-white/20 bg-white/10 p-5 shadow-glow backdrop-blur-xl md:p-7"
         >
           <p className="mb-2 text-sm uppercase tracking-[0.3em] text-cyan-200/90">Fer&apos;s Birthday Atlas</p>
-          <h1 className="font-[var(--font-heading)] text-3xl font-bold text-white md:text-5xl">Real Portugal Paint Map</h1>
+          <h1 className="font-[var(--font-heading)] text-3xl font-bold text-white md:text-5xl">Portugal Paint Map + Islands</h1>
           <p className="mt-3 max-w-3xl text-sm text-slate-100/85 md:text-base">
-            Real district boundaries, paint-by-number interactions, and custom travel icons for Fer&apos;s 28th birthday route across Portugal.
+            Real district boundaries plus Azores and Madeira insets, with paint-by-number interactions, hover tilt in 3D, and fill particles.
           </p>
         </motion.div>
       </div>
@@ -376,7 +515,7 @@ export default function HomePage() {
             animate="visible"
             variants={{
               hidden: {},
-              visible: { transition: { staggerChildren: 0.04, delayChildren: 0.1 } },
+              visible: { transition: { staggerChildren: 0.03, delayChildren: 0.1 } },
             }}
             className="grid max-h-[56vh] gap-2 overflow-y-auto pr-1"
           >
@@ -388,7 +527,7 @@ export default function HomePage() {
                   variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
                   onClick={() => {
                     setActivePaletteId(color.id);
-                    setStatusMessage(`Selected #${color.number}. Paint district #${color.number} (${color.regionName}).`);
+                    setStatusMessage(`Selected #${color.number}. Paint region #${color.number} (${color.regionName}).`);
                   }}
                   whileTap={{ scale: 0.97 }}
                   className={`flex items-center gap-3 rounded-2xl border px-3 py-2 text-left transition-all ${
@@ -440,96 +579,178 @@ export default function HomePage() {
         </motion.aside>
 
         <motion.section
-          ref={mapWrapRef}
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.65, ease: 'easeOut' }}
           className="relative rounded-3xl border border-white/20 bg-white/10 p-4 shadow-glow backdrop-blur-xl md:p-8"
         >
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-[var(--font-heading)] text-2xl font-semibold text-white">Interactive Portugal District Map</h3>
-            <p className="text-xs uppercase tracking-[0.22em] text-cyan-100/90">Real geography • paint by number</p>
+            <h3 className="font-[var(--font-heading)] text-2xl font-semibold text-white">Interactive Portugal + Islands</h3>
+            <p className="text-xs uppercase tracking-[0.22em] text-cyan-100/90">3D tilt • particles • paint by number</p>
           </div>
 
-          <div className="relative mx-auto max-w-[540px]">
-            <svg
-              viewBox={PORTUGAL_VIEWBOX}
-              className="w-full drop-shadow-[0_26px_40px_rgba(8,10,35,0.55)]"
-              role="img"
-              aria-label="Portugal districts map"
+          <div
+            ref={mapCanvasRef}
+            onPointerDown={() => setIsPointerDown(true)}
+            onPointerUp={() => setIsPointerDown(false)}
+            onPointerCancel={() => setIsPointerDown(false)}
+            onMouseMove={updateTilt}
+            onPointerLeave={() => {
+              setIsPointerDown(false);
+              resetTilt();
+              setTooltip(null);
+            }}
+            className="relative mx-auto max-w-[760px] overflow-hidden rounded-[28px] border border-white/15 bg-slate-950/15"
+            style={{ perspective: '1400px' }}
+          >
+            <MapTiltScene tilt={tilt} intensity={canTiltForDevice ? 1 : 0} subtle />
+
+            <motion.div
+              className="relative z-10"
+              animate={{
+                rotateX: (canTiltForDevice ? tilt.y : 0) * 2.2,
+                rotateY: (canTiltForDevice ? tilt.x : 0) * -2.8,
+              }}
+              transition={{ type: 'spring', stiffness: 92, damping: 26, mass: 0.8 }}
+              style={{ transformStyle: 'preserve-3d' }}
             >
-              <defs>
-                <linearGradient id="seaGradient" x1="0%" x2="100%" y1="0%" y2="100%">
-                  <stop offset="0%" stopColor="rgba(34,211,238,0.13)" />
-                  <stop offset="100%" stopColor="rgba(99,102,241,0.08)" />
-                </linearGradient>
-              </defs>
+              <svg
+                viewBox={MAP_VIEWBOX}
+                className="w-full drop-shadow-[0_26px_40px_rgba(8,10,35,0.55)]"
+                role="img"
+                aria-label="Portugal regions and islands map"
+              >
+                <defs>
+                  <linearGradient id="seaGradient" x1="0%" x2="100%" y1="0%" y2="100%">
+                    <stop offset="0%" stopColor="rgba(34,211,238,0.13)" />
+                    <stop offset="100%" stopColor="rgba(99,102,241,0.08)" />
+                  </linearGradient>
+                </defs>
 
-              <rect x={0} y={0} width={460} height={760} fill="url(#seaGradient)" rx={24} />
+                <rect x={0} y={0} width={MAP_WIDTH} height={MAP_HEIGHT} fill="url(#seaGradient)" rx={24} />
 
-              {regions.map((region) => {
-                const isMatchTarget = activeNumber === region.number;
-                const isPainted = Boolean(region.currentColor);
-                const numberFont = region.name.includes('Lisboa') ? 12 : 15;
-                const iconFont = region.name.includes('Lisboa') ? 10 : 12;
-
-                return (
-                  <g key={region.id}>
-                    <motion.path
-                      d={region.path}
-                      onClick={(event) => paintRegion(region.id, event)}
-                      onMouseMove={(event) => updateTooltip(event, `${region.name} • ${region.subtitle}`)}
-                      onMouseLeave={() => setTooltip(null)}
-                      whileHover={{ scale: 1.01, filter: 'drop-shadow(0 0 10px rgba(255,255,255,0.45))' }}
-                      whileTap={{ scale: 0.985 }}
-                      transition={{ type: 'spring', stiffness: 280, damping: 20 }}
-                      style={{
-                        transformBox: 'fill-box',
-                        transformOrigin: 'center',
-                        fill: region.currentColor ?? 'rgba(255,255,255,0.06)',
-                        transition: 'fill 300ms ease',
-                      }}
-                      stroke={isMatchTarget ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.43)'}
-                      strokeWidth={isMatchTarget ? 2.4 : 1.4}
-                      fillRule="evenodd"
-                      className="cursor-pointer"
+                {ISLAND_INSET_FRAMES.map((frame) => (
+                  <g key={frame.key}>
+                    <rect
+                      x={frame.x}
+                      y={frame.y}
+                      width={frame.width}
+                      height={frame.height}
+                      rx={16}
+                      fill="rgba(255,255,255,0.045)"
+                      stroke="rgba(255,255,255,0.28)"
+                      strokeWidth={1.1}
+                      strokeDasharray="4 5"
                     />
-
-                    <circle
-                      cx={region.label.x}
-                      cy={region.label.y - 1}
-                      r={isMatchTarget ? 13 : 11}
-                      fill={isPainted ? 'rgba(9,15,34,0.78)' : 'rgba(255,255,255,0.12)'}
-                      stroke="rgba(255,255,255,0.42)"
-                      strokeWidth={1}
-                      className="pointer-events-none"
-                    />
-
                     <text
-                      x={region.label.x}
-                      y={region.label.y + 3}
+                      x={frame.x + frame.width / 2}
+                      y={frame.y + 16}
                       textAnchor="middle"
-                      className="pointer-events-none select-none"
-                      fill="rgba(255,255,255,0.98)"
-                      style={{ fontWeight: 800, fontSize: numberFont }}
+                      fill="rgba(207,250,254,0.9)"
+                      style={{ fontSize: 10, letterSpacing: 1.1, textTransform: 'uppercase' }}
                     >
-                      {region.number}
-                    </text>
-
-                    <text
-                      x={region.label.x}
-                      y={region.label.y + 17}
-                      textAnchor="middle"
-                      className="pointer-events-none select-none"
-                      fill="rgba(255,255,255,0.95)"
-                      style={{ fontSize: iconFont }}
-                    >
-                      {region.icon}
+                      {frame.key} inset
                     </text>
                   </g>
-                );
-              })}
-            </svg>
+                ))}
+
+                {regions.map((region) => {
+                  const isMatchTarget = activeNumber === region.number;
+                  const isPainted = Boolean(region.currentColor);
+                  const xOffset = region.zone === 'mainland' ? MAINLAND_X_OFFSET : 0;
+                  const labelX = region.label.x + xOffset;
+                  const labelY = region.label.y;
+                  const isLisbon = region.key === 'Lisboa';
+                  const isIsland = region.zone === 'island';
+                  const numberFont = isIsland ? 11 : isLisbon ? 12 : 15;
+                  const iconFont = isIsland ? 10 : isLisbon ? 10 : 12;
+
+                  return (
+                    <g key={region.id}>
+                      <motion.path
+                        d={region.path}
+                        transform={xOffset ? `translate(${xOffset} 0)` : undefined}
+                        onClick={(event) => paintRegion(region.id, event)}
+                        onMouseMove={(event) => updateTooltip(event, `${region.name} • ${region.subtitle}`)}
+                        whileHover={{ scale: 1.01, filter: 'drop-shadow(0 0 10px rgba(255,255,255,0.45))' }}
+                        transition={{ type: 'spring', stiffness: 280, damping: 20 }}
+                        style={{
+                          transformBox: 'fill-box',
+                          transformOrigin: 'center',
+                          fill: region.currentColor ?? 'rgba(255,255,255,0.06)',
+                          transition: 'fill 300ms ease',
+                        }}
+                        stroke={isMatchTarget ? 'rgba(255,255,255,0.93)' : 'rgba(255,255,255,0.43)'}
+                        strokeWidth={isMatchTarget ? 2.5 : isIsland ? 1.2 : 1.45}
+                        fillRule="evenodd"
+                        className="cursor-pointer"
+                      />
+
+                      <circle
+                        cx={labelX}
+                        cy={labelY - 1}
+                        r={isMatchTarget ? 13 : 11}
+                        fill={isPainted ? 'rgba(9,15,34,0.78)' : 'rgba(255,255,255,0.12)'}
+                        stroke="rgba(255,255,255,0.42)"
+                        strokeWidth={1}
+                        className="pointer-events-none"
+                      />
+
+                      <text
+                        x={labelX}
+                        y={labelY + 3}
+                        textAnchor="middle"
+                        className="pointer-events-none select-none"
+                        fill="rgba(255,255,255,0.98)"
+                        style={{ fontWeight: 800, fontSize: numberFont }}
+                      >
+                        {region.number}
+                      </text>
+
+                      <text
+                        x={labelX}
+                        y={labelY + 17}
+                        textAnchor="middle"
+                        className="pointer-events-none select-none"
+                        fill="rgba(255,255,255,0.95)"
+                        style={{ fontSize: iconFont }}
+                      >
+                        {region.icon}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+            </motion.div>
+
+            <div className="pointer-events-none absolute inset-0 z-20">
+              <AnimatePresence>
+                {fillParticles.map((particle) => (
+                  <motion.span
+                    key={particle.id}
+                    initial={{ x: particle.x, y: particle.y, opacity: 0.95, scale: 0.7, rotate: 0 }}
+                    animate={{
+                      x: particle.x + particle.dx,
+                      y: particle.y + particle.dy,
+                      opacity: 0,
+                      scale: 1.45,
+                      rotate: particle.spin,
+                    }}
+                    transition={{ duration: particle.duration, ease: 'easeOut' }}
+                    onAnimationComplete={() => removeFillParticle(particle.id)}
+                    className="absolute rounded-full mix-blend-screen"
+                    style={{
+                      left: 0,
+                      top: 0,
+                      width: particle.size,
+                      height: particle.size,
+                      backgroundColor: particle.color,
+                      boxShadow: `0 0 14px ${particle.color}`,
+                    }}
+                  />
+                ))}
+              </AnimatePresence>
+            </div>
 
             <AnimatePresence>
               {tooltip && (
@@ -539,7 +760,7 @@ export default function HomePage() {
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.92, y: 4 }}
                   transition={{ duration: 0.16 }}
-                  className="pointer-events-none absolute z-20 rounded-lg border border-white/35 bg-slate-900/80 px-2.5 py-1 text-xs font-semibold text-cyan-100 shadow-lg backdrop-blur"
+                  className="pointer-events-none absolute z-30 rounded-lg border border-white/35 bg-slate-900/80 px-2.5 py-1 text-xs font-semibold text-cyan-100 shadow-lg backdrop-blur"
                   style={{ left: tooltip.x, top: tooltip.y }}
                 >
                   {tooltip.label}
