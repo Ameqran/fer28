@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import confetti from 'canvas-confetti';
+import { toBlob } from 'html-to-image';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import MapTiltScene, { type TiltVector } from './MapTiltScene';
 import { ISLAND_INSET_FRAMES, ISLAND_PATHS } from './portugalIslandPaths';
@@ -62,6 +63,36 @@ interface FillParticle {
   spin: number;
   duration: number;
   color: string;
+}
+
+function SaveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-4 w-4">
+      <path
+        d="M5 4h10l4 4v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm9 0v5H8V4m4 8v5m0 0-2-2m2 2 2-2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ShareIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-4 w-4">
+      <path
+        d="M14 5h5v5m0-5-7 7M7 12a3 3 0 1 0 0 6h10a3 3 0 0 0 0-6h-1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 const MAP_VIEWBOX = '0 0 620 760';
@@ -258,6 +289,7 @@ export default function HomePage() {
   const [celebrated, setCelebrated] = useState(false);
   const [tilt, setTilt] = useState<TiltVector>({ x: 0, y: 0 });
   const [fillParticles, setFillParticles] = useState<FillParticle[]>([]);
+  const [isExportingMap, setIsExportingMap] = useState(false);
   const [isPointerDown, setIsPointerDown] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [isCoarsePointer, setIsCoarsePointer] = useState(false);
@@ -434,6 +466,118 @@ export default function HomePage() {
     });
   };
 
+  const getScreenshotName = () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    return `fer28-portugal-map-${stamp}.png`;
+  };
+
+  const downloadBlob = (blob: Blob, fileName: string) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = fileName;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1200);
+  };
+
+  const captureMapScreenshot = async () => {
+    const wrapper = mapCanvasRef.current;
+    if (!wrapper) {
+      throw new Error('Map is not ready yet.');
+    }
+
+    setTooltip(null);
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+    const blob = await toBlob(wrapper, {
+      cacheBust: true,
+      pixelRatio: Math.min(2, window.devicePixelRatio || 1),
+      backgroundColor: '#0f1229',
+      filter: (node) => !(node instanceof HTMLElement && node.dataset.exportIgnore === 'true'),
+    });
+
+    if (!blob) {
+      throw new Error('Could not generate PNG screenshot.');
+    }
+
+    return blob;
+  };
+
+  const saveScreenshot = async () => {
+    if (completion < 100) {
+      setStatusMessage('Complete 100% of the map to unlock Save PNG and Share.');
+      return;
+    }
+
+    if (isExportingMap) {
+      return;
+    }
+
+    setIsExportingMap(true);
+
+    try {
+      const blob = await captureMapScreenshot();
+      const fileName = getScreenshotName();
+      downloadBlob(blob, fileName);
+      setStatusMessage('PNG screenshot saved.');
+    } catch {
+      setStatusMessage('Could not save screenshot. Try again.');
+    } finally {
+      setIsExportingMap(false);
+    }
+  };
+
+  const shareScreenshot = async () => {
+    if (completion < 100) {
+      setStatusMessage('Complete 100% of the map to unlock Save PNG and Share.');
+      return;
+    }
+
+    if (isExportingMap) {
+      return;
+    }
+
+    setIsExportingMap(true);
+
+    let blob: Blob | null = null;
+    const fileName = getScreenshotName();
+
+    try {
+      blob = await captureMapScreenshot();
+      const file = new File([blob], fileName, { type: 'image/png' });
+
+      if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          title: "Fer's Portugal Paint Map",
+          text: `Completion: ${completion}%`,
+          files: [file],
+        });
+        setStatusMessage('Screenshot shared successfully.');
+        return;
+      }
+
+      if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        setStatusMessage('Screenshot copied to clipboard. Paste it to share.');
+        return;
+      }
+
+      downloadBlob(blob, fileName);
+      setStatusMessage('Sharing is not supported here. Screenshot downloaded instead.');
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        setStatusMessage('Share canceled.');
+      } else if (blob) {
+        downloadBlob(blob, fileName);
+        setStatusMessage('Share failed, screenshot downloaded instead.');
+      } else {
+        setStatusMessage('Could not share screenshot. Try again.');
+      }
+    } finally {
+      setIsExportingMap(false);
+    }
+  };
+
   const updateTooltip = (event: MouseEvent<SVGPathElement>, regionLabel: string) => {
     const wrapper = mapCanvasRef.current;
     if (!wrapper) {
@@ -472,6 +616,7 @@ export default function HomePage() {
   };
 
   const activeNumber = activePalette?.number ?? null;
+  const canExportMap = completion === 100;
 
   return (
     <main className="relative z-10 min-h-screen px-4 py-6 md:px-8 md:py-8">
@@ -550,7 +695,7 @@ export default function HomePage() {
             })}
           </motion.div>
 
-          <div className="mt-5 grid grid-cols-3 gap-2">
+          <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3">
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={clearAll}
@@ -572,6 +717,28 @@ export default function HomePage() {
               className="rounded-xl border border-sky-200/35 bg-sky-500/20 px-3 py-2 text-sm font-semibold text-sky-100 transition-opacity hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Undo
+            </motion.button>
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={saveScreenshot}
+              disabled={!canExportMap || isExportingMap}
+              className="rounded-xl border border-fuchsia-200/35 bg-fuchsia-500/20 px-3 py-2 text-sm font-semibold text-fuchsia-100 transition-opacity hover:bg-fuchsia-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <SaveIcon />
+                {isExportingMap ? 'Working...' : 'Save PNG'}
+              </span>
+            </motion.button>
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={shareScreenshot}
+              disabled={!canExportMap || isExportingMap}
+              className="rounded-xl border border-violet-200/35 bg-violet-500/20 px-3 py-2 text-sm font-semibold text-violet-100 transition-opacity hover:bg-violet-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <ShareIcon />
+                Share
+              </span>
             </motion.button>
           </div>
 
@@ -734,7 +901,7 @@ export default function HomePage() {
               </svg>
             </motion.div>
 
-            <div className="pointer-events-none absolute inset-0 z-20">
+            <div data-export-ignore="true" className="pointer-events-none absolute inset-0 z-20">
               <AnimatePresence>
                 {fillParticles.map((particle) => (
                   <motion.span
@@ -771,6 +938,7 @@ export default function HomePage() {
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.92, y: 4 }}
                   transition={{ duration: 0.16 }}
+                  data-export-ignore="true"
                   className="pointer-events-none absolute z-30 rounded-lg border border-white/35 bg-slate-900/80 px-2.5 py-1 text-xs font-semibold text-cyan-100 shadow-lg backdrop-blur"
                   style={{ left: tooltip.x, top: tooltip.y }}
                 >

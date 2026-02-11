@@ -107,7 +107,11 @@ function DriftParticles({ tilt, intensity, subtle }: { tilt: TiltVector; intensi
 export default function MapTiltScene({ tilt, intensity = 1, subtle = true }: MapTiltSceneProps) {
   return (
     <div className="pointer-events-none absolute inset-0 z-0">
-      <Canvas camera={{ position: [0, 0, 6], fov: 34 }} gl={{ alpha: true, antialias: true }} dpr={[1, 1.6]}>
+      <Canvas
+        camera={{ position: [0, 0, 6], fov: 34 }}
+        gl={{ alpha: true, antialias: true, preserveDrawingBuffer: true }}
+        dpr={[1, 1.6]}
+      >
         <ambientLight intensity={subtle ? 0.62 : 0.8} />
         <directionalLight position={[2.8, 2.4, 5.5]} intensity={subtle ? 0.78 : 1.05} color="#ddd6fe" />
         <pointLight position={[-2.4, -1.8, 2.2]} intensity={subtle ? 0.6 : 0.85} color="#67e8f9" />
