@@ -35,9 +35,8 @@ function HoloCard({ tilt, intensity, subtle }: { tilt: TiltVector; intensity: nu
       <mesh position={[0, 0, -0.12]}>
         <planeGeometry args={[7.8, 9.2, 1, 1]} />
         <meshPhysicalMaterial
-          color="#93c5fd"
+          color="black"
           transparent
-          opacity={subtle ? 0.1 : 0.14}
           roughness={subtle ? 0.26 : 0.14}
           metalness={0.22}
           clearcoat={1}

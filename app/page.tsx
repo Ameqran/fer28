@@ -475,7 +475,7 @@ export default function HomePage() {
 
   return (
     <main className="relative z-10 min-h-screen px-4 py-6 md:px-8 md:py-8">
-      <div className="mx-auto mb-6 max-w-7xl">
+      <div className="mx-auto mb-6 max-w-[90rem]">
         <motion.div
           initial={{ opacity: 0, y: -16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -490,7 +490,7 @@ export default function HomePage() {
         </motion.div>
       </div>
 
-      <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="mx-auto grid max-w-[90rem] gap-6 lg:grid-cols-[350px_minmax(0,1fr)]">
         <motion.aside
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -600,7 +600,7 @@ export default function HomePage() {
               resetTilt();
               setTooltip(null);
             }}
-            className="relative mx-auto max-w-[760px] overflow-hidden rounded-[28px] border border-white/15 bg-slate-950/15"
+            className="relative mx-auto max-w-[900px] overflow-hidden rounded-[28px] border border-white/15 bg-slate-950/15"
             style={{ perspective: '1400px' }}
           >
             <MapTiltScene tilt={tilt} intensity={canTiltForDevice ? 1 : 0} subtle />
@@ -662,8 +662,14 @@ export default function HomePage() {
                   const labelY = region.label.y;
                   const isLisbon = region.key === 'Lisboa';
                   const isIsland = region.zone === 'island';
-                  const numberFont = isIsland ? 11 : isLisbon ? 12 : 15;
-                  const iconFont = isIsland ? 10 : isLisbon ? 10 : 12;
+                  const numberFont = isIsland ? 13 : isLisbon ? 14 : 17;
+                  const iconFont = isIsland ? 12 : isLisbon ? 12 : 14;
+                  const regionFill = region.currentColor ?? 'rgba(255,255,255,0.08)';
+                  const regionStroke = isMatchTarget
+                    ? 'rgba(255,255,255,0.93)'
+                    : isPainted
+                      ? 'rgba(15,23,42,0.6)'
+                      : 'rgba(255,255,255,0.43)';
 
                   return (
                     <g key={region.id}>
@@ -672,25 +678,30 @@ export default function HomePage() {
                         transform={xOffset ? `translate(${xOffset} 0)` : undefined}
                         onClick={(event) => paintRegion(region.id, event)}
                         onMouseMove={(event) => updateTooltip(event, `${region.name} • ${region.subtitle}`)}
-                        whileHover={{ scale: 1.01, filter: 'drop-shadow(0 0 10px rgba(255,255,255,0.45))' }}
+                        fill={regionFill}
+                        fillOpacity={isPainted ? 1 : 0.9}
+                        stroke={regionStroke}
+                        strokeWidth={isMatchTarget ? 2.5 : isIsland ? 1.3 : 1.5}
+                        animate={{
+                          fill: regionFill,
+                          fillOpacity: isPainted ? 1 : 0.9,
+                          stroke: regionStroke,
+                        }}
                         transition={{ type: 'spring', stiffness: 280, damping: 20 }}
                         style={{
                           transformBox: 'fill-box',
                           transformOrigin: 'center',
-                          fill: region.currentColor ?? 'rgba(255,255,255,0.06)',
-                          transition: 'fill 300ms ease',
+                          transition: 'filter 300ms ease',
                         }}
-                        stroke={isMatchTarget ? 'rgba(255,255,255,0.93)' : 'rgba(255,255,255,0.43)'}
-                        strokeWidth={isMatchTarget ? 2.5 : isIsland ? 1.2 : 1.45}
-                        fillRule="evenodd"
+                        fillRule="nonzero"
                         className="cursor-pointer"
                       />
 
                       <circle
                         cx={labelX}
                         cy={labelY - 1}
-                        r={isMatchTarget ? 13 : 11}
-                        fill={isPainted ? 'rgba(9,15,34,0.78)' : 'rgba(255,255,255,0.12)'}
+                        r={isMatchTarget ? 15 : 13}
+                        fill="rgba(8,14,30,0.62)"
                         stroke="rgba(255,255,255,0.42)"
                         strokeWidth={1}
                         className="pointer-events-none"
@@ -698,7 +709,7 @@ export default function HomePage() {
 
                       <text
                         x={labelX}
-                        y={labelY + 3}
+                        y={labelY + 4}
                         textAnchor="middle"
                         className="pointer-events-none select-none"
                         fill="rgba(255,255,255,0.98)"
@@ -709,7 +720,7 @@ export default function HomePage() {
 
                       <text
                         x={labelX}
-                        y={labelY + 17}
+                        y={labelY + 21}
                         textAnchor="middle"
                         className="pointer-events-none select-none"
                         fill="rgba(255,255,255,0.95)"
