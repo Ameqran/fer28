@@ -99,8 +99,9 @@ const MAP_VIEWBOX = '0 0 620 760';
 const MAP_WIDTH = 620;
 const MAP_HEIGHT = 760;
 const MAINLAND_X_OFFSET = 150;
+const SESSION_PALETTE_KEY = 'fer28-random-palette-v1';
 
-const PALETTE_COLORS: PaletteColor[] = [
+const BASE_PALETTE_COLORS: PaletteColor[] = [
   { id: 'c1', number: 1, regionName: 'Viana do Castelo', hex: '#6A49A2', displayHex: '#6A49A2' },
   { id: 'c2', number: 2, regionName: 'Braga', hex: '#7B2CBF', displayHex: '#7B2CBF' },
   { id: 'c3', number: 3, regionName: 'Porto', hex: '#2C6E71', displayHex: '#2C6E71' },
@@ -242,7 +243,7 @@ const DISTRICT_GEOMETRY = ALL_PATHS.reduce<Record<string, (typeof ALL_PATHS)[num
 
 const REGION_BLUEPRINTS: RegionBlueprint[] = DISTRICT_META.map((meta) => {
   const geometry = DISTRICT_GEOMETRY[meta.key];
-  const color = PALETTE_COLORS.find((item) => item.id === meta.paletteId);
+  const color = BASE_PALETTE_COLORS.find((item) => item.id === meta.paletteId);
 
   if (!geometry || !color) {
     throw new Error(`Missing geometry or color for ${meta.key}`);
@@ -266,13 +267,98 @@ const REGION_BLUEPRINTS: RegionBlueprint[] = DISTRICT_META.map((meta) => {
   };
 });
 
-const STORAGE_KEY = 'fer28-portugal-map-real-v2';
+const STORAGE_KEY_PREFIX = 'fer28-portugal-map-real-v3';
+const STORAGE_INDEX_KEY = `${STORAGE_KEY_PREFIX}:index`;
+const STORAGE_MAX_ENTRIES = 24;
+const STORAGE_WRITE_DEBOUNCE_MS = 220;
 
-const createInitialRegions = (): RegionState[] =>
-  REGION_BLUEPRINTS.map((region) => ({
+const isHexColor = (value: string) => /^#[0-9A-Fa-f]{6}$/.test(value);
+
+const shuffleHexPool = (hexValues: string[]) => {
+  const next = [...hexValues];
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+  }
+  return next;
+};
+
+const createSessionPaletteColors = (): PaletteColor[] => {
+  const stored = window.sessionStorage.getItem(SESSION_PALETTE_KEY);
+  const hexPool = BASE_PALETTE_COLORS.map((item) => item.hex);
+
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored) as string[];
+      const isValidStoredPalette =
+        Array.isArray(parsed)
+        && parsed.length === BASE_PALETTE_COLORS.length
+        && parsed.every((item) => typeof item === 'string' && isHexColor(item))
+        && new Set(parsed).size === parsed.length;
+
+      if (isValidStoredPalette) {
+        return BASE_PALETTE_COLORS.map((item, index) => ({
+          ...item,
+          hex: parsed[index].toUpperCase(),
+          displayHex: parsed[index].toUpperCase(),
+        }));
+      }
+    } catch {
+      window.sessionStorage.removeItem(SESSION_PALETTE_KEY);
+    }
+  }
+
+  const shuffledHexPool = shuffleHexPool(hexPool);
+  window.sessionStorage.setItem(SESSION_PALETTE_KEY, JSON.stringify(shuffledHexPool));
+  return BASE_PALETTE_COLORS.map((item, index) => ({
+    ...item,
+    hex: shuffledHexPool[index].toUpperCase(),
+    displayHex: shuffledHexPool[index].toUpperCase(),
+  }));
+};
+
+const createInitialRegions = (paletteColors: PaletteColor[]): RegionState[] => {
+  const colorsByPaletteId = paletteColors.reduce<Record<string, string>>((acc, color) => {
+    acc[color.id] = color.hex;
+    return acc;
+  }, {});
+
+  return REGION_BLUEPRINTS.map((region) => ({
     ...region,
+    defaultColor: colorsByPaletteId[region.paletteId] ?? region.defaultColor,
     currentColor: null,
   }));
+};
+
+const loadStorageIndex = () => {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_INDEX_KEY);
+    if (!raw) {
+      return [] as string[];
+    }
+    const parsed = JSON.parse(raw) as string[];
+    if (!Array.isArray(parsed)) {
+      return [] as string[];
+    }
+    return parsed.filter(
+      (item) => typeof item === 'string' && item.startsWith(`${STORAGE_KEY_PREFIX}:`) && item !== STORAGE_INDEX_KEY,
+    );
+  } catch {
+    return [] as string[];
+  }
+};
+
+const touchStorageIndex = (activeKey: string) => {
+  const nextKeys = [activeKey, ...loadStorageIndex().filter((item) => item !== activeKey)];
+  const keptKeys = nextKeys.slice(0, STORAGE_MAX_ENTRIES);
+  const staleKeys = nextKeys.slice(STORAGE_MAX_ENTRIES);
+
+  for (const staleKey of staleKeys) {
+    window.localStorage.removeItem(staleKey);
+  }
+
+  window.localStorage.setItem(STORAGE_INDEX_KEY, JSON.stringify(keptKeys));
+};
 
 const serializeColors = (regions: RegionState[]): Record<string, string | null> =>
   regions.reduce<Record<string, string | null>>((acc, region) => {
@@ -281,7 +367,8 @@ const serializeColors = (regions: RegionState[]): Record<string, string | null> 
   }, {});
 
 export default function HomePage() {
-  const [regions, setRegions] = useState<RegionState[]>(() => createInitialRegions());
+  const [paletteColors, setPaletteColors] = useState<PaletteColor[]>(BASE_PALETTE_COLORS);
+  const [regions, setRegions] = useState<RegionState[]>(() => createInitialRegions(BASE_PALETTE_COLORS));
   const [activePaletteId, setActivePaletteId] = useState<string | null>(null);
   const [history, setHistory] = useState<Array<Record<string, string | null>>>([]);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string } | null>(null);
@@ -293,14 +380,22 @@ export default function HomePage() {
   const [isPointerDown, setIsPointerDown] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+  const [isPaletteReady, setIsPaletteReady] = useState(false);
 
   const mapCanvasRef = useRef<HTMLDivElement>(null);
   const particleIdRef = useRef(0);
+  const saveTimeoutRef = useRef<number | null>(null);
+  const lastSavedSnapshotRef = useRef<string>('');
   const canTiltForDevice = !prefersReducedMotion && !isCoarsePointer;
+  const paletteSignature = useMemo(
+    () => paletteColors.map((color) => `${color.id}:${color.hex}`).join('|'),
+    [paletteColors],
+  );
+  const storageKey = useMemo(() => `${STORAGE_KEY_PREFIX}:${paletteSignature}`, [paletteSignature]);
 
   const activePalette = useMemo(
-    () => PALETTE_COLORS.find((item) => item.id === activePaletteId) ?? null,
-    [activePaletteId],
+    () => paletteColors.find((item) => item.id === activePaletteId) ?? null,
+    [activePaletteId, paletteColors],
   );
 
   const completion = useMemo(() => {
@@ -309,13 +404,28 @@ export default function HomePage() {
   }, [regions]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
+    const nextPaletteColors = createSessionPaletteColors();
+    setPaletteColors(nextPaletteColors);
+    setRegions(createInitialRegions(nextPaletteColors));
+    setHistory([]);
+    setActivePaletteId(null);
+    setIsPaletteReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isPaletteReady) {
+      return;
+    }
+
+    const saved = window.localStorage.getItem(storageKey);
     if (!saved) {
+      lastSavedSnapshotRef.current = '';
       return;
     }
 
     try {
       const parsed = JSON.parse(saved) as Record<string, string | null>;
+      lastSavedSnapshotRef.current = saved;
       setRegions((prev) =>
         prev.map((region) => ({
           ...region,
@@ -323,13 +433,51 @@ export default function HomePage() {
         })),
       );
     } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
+      lastSavedSnapshotRef.current = '';
     }
-  }, []);
+  }, [isPaletteReady, storageKey]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeColors(regions)));
-  }, [regions]);
+    if (!isPaletteReady) {
+      return;
+    }
+    const snapshot = JSON.stringify(serializeColors(regions));
+    if (snapshot === lastSavedSnapshotRef.current) {
+      return;
+    }
+
+    if (saveTimeoutRef.current !== null) {
+      window.clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(storageKey, snapshot);
+        touchStorageIndex(storageKey);
+        lastSavedSnapshotRef.current = snapshot;
+      } catch {
+        // Ignore quota and storage exceptions so UI remains responsive.
+      } finally {
+        saveTimeoutRef.current = null;
+      }
+    }, STORAGE_WRITE_DEBOUNCE_MS);
+
+    return () => {
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [isPaletteReady, regions, storageKey]);
+
+  useEffect(
+    () => () => {
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (completion === 100 && !celebrated) {
@@ -664,7 +812,7 @@ export default function HomePage() {
             }}
             className="grid max-h-[56vh] gap-2 overflow-y-auto pr-1"
           >
-            {PALETTE_COLORS.map((color) => {
+            {paletteColors.map((color) => {
               const isActive = color.id === activePaletteId;
               return (
                 <motion.button
