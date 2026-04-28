@@ -93,7 +93,6 @@ const MAP_VIEWBOX = '0 0 620 760';
 const MAP_WIDTH = 620;
 const MAP_HEIGHT = 760;
 const MAINLAND_X_OFFSET = 150;
-const SESSION_PALETTE_KEY = 'fer28-random-palette-v1';
 
 const BASE_PALETTE_COLORS: PaletteColor[] = [
   { id: 'c1', number: 1, regionName: 'Viana do Castelo', hex: '#6A49A2', displayHex: '#6A49A2' },
@@ -268,49 +267,6 @@ const STORAGE_WRITE_DEBOUNCE_MS = 220;
 
 const isHexColor = (value: string) => /^#[0-9A-Fa-f]{6}$/.test(value);
 
-const shuffleHexPool = (hexValues: string[]) => {
-  const next = [...hexValues];
-  for (let index = next.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1));
-    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
-  }
-  return next;
-};
-
-const createSessionPaletteColors = (): PaletteColor[] => {
-  const stored = window.sessionStorage.getItem(SESSION_PALETTE_KEY);
-  const hexPool = BASE_PALETTE_COLORS.map((item) => item.hex);
-
-  if (stored) {
-    try {
-      const parsed = JSON.parse(stored) as string[];
-      const isValidStoredPalette =
-        Array.isArray(parsed)
-        && parsed.length === BASE_PALETTE_COLORS.length
-        && parsed.every((item) => typeof item === 'string' && isHexColor(item))
-        && new Set(parsed).size === parsed.length;
-
-      if (isValidStoredPalette) {
-        return BASE_PALETTE_COLORS.map((item, index) => ({
-          ...item,
-          hex: parsed[index].toUpperCase(),
-          displayHex: parsed[index].toUpperCase(),
-        }));
-      }
-    } catch {
-      window.sessionStorage.removeItem(SESSION_PALETTE_KEY);
-    }
-  }
-
-  const shuffledHexPool = shuffleHexPool(hexPool);
-  window.sessionStorage.setItem(SESSION_PALETTE_KEY, JSON.stringify(shuffledHexPool));
-  return BASE_PALETTE_COLORS.map((item, index) => ({
-    ...item,
-    hex: shuffledHexPool[index].toUpperCase(),
-    displayHex: shuffledHexPool[index].toUpperCase(),
-  }));
-};
-
 const createInitialRegions = (paletteColors: PaletteColor[]): RegionState[] => {
   const colorsByPaletteId = paletteColors.reduce<Record<string, string>>((acc, color) => {
     acc[color.id] = color.hex;
@@ -416,8 +372,10 @@ export default function HomePage() {
     return Math.round((correctCount / regions.length) * 100);
   }, [regions]);
 
+  const coloredCount = useMemo(() => regions.filter((region) => Boolean(region.currentColor)).length, [regions]);
+
   useEffect(() => {
-    const nextPaletteColors = createSessionPaletteColors();
+    const nextPaletteColors = BASE_PALETTE_COLORS;
     setPaletteColors(nextPaletteColors);
     setRegions(createInitialRegions(nextPaletteColors));
     setHistory([]);
@@ -667,8 +625,8 @@ export default function HomePage() {
   };
 
   const saveScreenshot = async () => {
-    if (completion < 100) {
-      setStatusMessage('Complete 100% of the map to unlock Save PNG and Share.');
+    if (coloredCount === 0) {
+      setStatusMessage('Color at least one region to unlock Save PNG and Share.');
       return;
     }
 
@@ -691,8 +649,8 @@ export default function HomePage() {
   };
 
   const shareScreenshot = async () => {
-    if (completion < 100) {
-      setStatusMessage('Complete 100% of the map to unlock Save PNG and Share.');
+    if (coloredCount === 0) {
+      setStatusMessage('Color at least one region to unlock Save PNG and Share.');
       return;
     }
 
@@ -830,7 +788,7 @@ export default function HomePage() {
     setStatusMessage('Signed out. Progress is still saved locally on this device.');
   };
 
-  const canExportMap = completion === 100;
+  const canExportMap = coloredCount > 0;
 
   return (
     <main className="relative z-10 min-h-screen px-3 py-3 md:px-5">
