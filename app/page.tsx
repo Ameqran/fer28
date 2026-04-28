@@ -800,14 +800,36 @@ export default function HomePage() {
           transition={{ duration: 0.7, ease: 'easeOut' }}
           className="grid w-full max-w-5xl items-center gap-6 rounded-2xl border border-white/20 bg-white/10 p-5 shadow-glow backdrop-blur-xl md:grid-cols-[minmax(0,1fr)_360px] md:p-8"
         >
-          <div className="min-w-0">
-            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100/90">A birthday gift for Fer</p>
+          <div className="mx-auto min-w-0 max-w-2xl text-center">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100/90">A birthday gift for Fer 🐿️</p>
             <h1 className="font-[var(--font-heading)] text-4xl font-bold leading-tight text-white md:text-6xl">
               Happy 28th birthday, my love.
             </h1>
-            <p className="mt-4 max-w-2xl text-base leading-7 text-slate-100/90 md:text-lg">
-              I made you a small Portugal map to discover, color, save, and keep. Each place is a little piece of the trip I imagine for us.
-            </p>
+            <div className="mx-auto mt-4 max-w-2xl space-y-4 text-base leading-7 text-slate-100/90 md:text-lg">
+              <p className="text-sm font-semibold tracking-[0.28em] text-cyan-100/80">A little sneaky sneaky 🙈 for you baby...</p>
+
+              <div className="space-y-1">
+                <p className="text-sm font-semibold tracking-[0.28em] text-cyan-100/80">· · ✦ · ·</p>
+              </div>
+
+              <p>
+                I know I&apos;m not always the best at gifts, but this time I really wanted to make something special using my coding skills.
+              </p>
+
+              <p>
+                I&apos;ve been watching how your eyes light up every time you talk about Portugal, the way you plan little trips in
+                your head and dream out loud.
+              </p>
+
+              <p>
+                So I took my time, waited for the right moment, and made this with all the love I have for you.
+              </p>
+
+              <p className="rounded-xl border border-cyan-100/20 bg-cyan-100/10 px-4 py-3 text-cyan-50">
+                Your very own Portugal map. Discover every region, color it in as you go, and save every place you visit.
+                It&apos;s yours to fill with memories. 🧡
+              </p>
+            </div>
             <button
               type="button"
               onClick={() => setHasOpenedGift(true)}
@@ -1163,4 +1185,3 @@ export default function HomePage() {
     </main>
   );
 }
-
