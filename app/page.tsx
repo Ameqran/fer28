@@ -3,9 +3,11 @@
 import { motion } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import { toBlob } from 'html-to-image';
+import type { User } from '@supabase/supabase-js';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { ISLAND_INSET_FRAMES, ISLAND_PATHS } from './portugalIslandPaths';
 import { DISTRICT_PATHS } from './portugalDistrictPaths';
+import { supabase } from './supabaseClient';
 
 type RegionZone = 'mainland' | 'island';
 
@@ -36,6 +38,11 @@ interface RegionBlueprint {
 
 interface RegionState extends RegionBlueprint {
   currentColor: string | null;
+}
+
+interface CloudProgressRow {
+  colors: Record<string, string | null> | null;
+  palette_colors: string[] | null;
 }
 
 interface DistrictMetaItem {
@@ -317,6 +324,30 @@ const createInitialRegions = (paletteColors: PaletteColor[]): RegionState[] => {
   }));
 };
 
+const applyPaletteToRegions = (regions: RegionState[], paletteColors: PaletteColor[]) => {
+  const colorsByPaletteId = paletteColors.reduce<Record<string, string>>((acc, color) => {
+    acc[color.id] = color.hex;
+    return acc;
+  }, {});
+
+  return regions.map((region) => ({
+    ...region,
+    defaultColor: colorsByPaletteId[region.paletteId] ?? region.defaultColor,
+  }));
+};
+
+const createPaletteFromHexes = (hexes: string[]) =>
+  BASE_PALETTE_COLORS.map((item, index) => ({
+    ...item,
+    hex: hexes[index]?.toUpperCase() ?? item.hex,
+    displayHex: hexes[index]?.toUpperCase() ?? item.displayHex,
+  }));
+
+const isValidPaletteHexes = (value: unknown): value is string[] =>
+  Array.isArray(value)
+  && value.length === BASE_PALETTE_COLORS.length
+  && value.every((item) => typeof item === 'string' && isHexColor(item));
+
 const loadStorageIndex = () => {
   try {
     const raw = window.localStorage.getItem(STORAGE_INDEX_KEY);
@@ -363,10 +394,17 @@ export default function HomePage() {
   const [celebrated, setCelebrated] = useState(false);
   const [isExportingMap, setIsExportingMap] = useState(false);
   const [isPaletteReady, setIsPaletteReady] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [email, setEmail] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [isCloudLoading, setIsCloudLoading] = useState(false);
+  const [isCloudSaving, setIsCloudSaving] = useState(false);
 
   const mapCanvasRef = useRef<HTMLDivElement>(null);
   const saveTimeoutRef = useRef<number | null>(null);
   const lastSavedSnapshotRef = useRef<string>('');
+  const lastCloudSnapshotRef = useRef<string>('');
+  const hasLoadedCloudRef = useRef(false);
   const paletteSignature = useMemo(
     () => paletteColors.map((color) => `${color.id}:${color.hex}`).join('|'),
     [paletteColors],
@@ -384,6 +422,26 @@ export default function HomePage() {
     setRegions(createInitialRegions(nextPaletteColors));
     setHistory([]);
     setIsPaletteReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) {
+      return;
+    }
+
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      hasLoadedCloudRef.current = false;
+      lastCloudSnapshotRef.current = '';
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -411,6 +469,56 @@ export default function HomePage() {
       lastSavedSnapshotRef.current = '';
     }
   }, [isPaletteReady, storageKey]);
+
+  useEffect(() => {
+    if (!supabase || !user || !isPaletteReady || hasLoadedCloudRef.current) {
+      return;
+    }
+
+    const supabaseClient = supabase;
+    hasLoadedCloudRef.current = true;
+    setIsCloudLoading(true);
+
+    const loadCloudProgress = async () => {
+      try {
+        const { data, error } = await supabaseClient
+          .from('map_progress')
+          .select('colors,palette_colors')
+          .eq('user_id', user.id)
+          .maybeSingle<CloudProgressRow>();
+
+        if (error) {
+          setStatusMessage('Signed in, but cloud progress could not load. Check the Supabase table setup.');
+          return;
+        }
+
+        if (!data) {
+          setStatusMessage('Signed in. Your progress will save to the cloud.');
+          return;
+        }
+
+        const nextPaletteColors = isValidPaletteHexes(data.palette_colors)
+          ? createPaletteFromHexes(data.palette_colors)
+          : paletteColors;
+        const snapshot = JSON.stringify(data.colors ?? {});
+
+        setPaletteColors(nextPaletteColors);
+        setRegions((prev) =>
+          applyPaletteToRegions(prev, nextPaletteColors).map((region) => ({
+            ...region,
+            currentColor: typeof data.colors?.[region.id] === 'string' ? data.colors[region.id] : null,
+          })),
+        );
+        lastSavedSnapshotRef.current = snapshot;
+        lastCloudSnapshotRef.current = snapshot;
+        setStatusMessage('Cloud progress loaded.');
+      } finally {
+        setIsCloudLoading(false);
+      }
+    };
+
+    loadCloudProgress();
+  }, [isPaletteReady, paletteColors, user]);
 
   useEffect(() => {
     if (!isPaletteReady) {
@@ -646,6 +754,81 @@ export default function HomePage() {
     });
   };
 
+  const signIn = async () => {
+    if (!supabase) {
+      setStatusMessage('Supabase environment variables are missing.');
+      return;
+    }
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setStatusMessage('Enter an email to receive a sign-in link.');
+      return;
+    }
+
+    setIsAuthLoading(true);
+    const { error } = await supabase.auth.signInWithOtp({
+      email: trimmedEmail,
+      options: {
+        emailRedirectTo: window.location.origin,
+      },
+    });
+    setIsAuthLoading(false);
+
+    if (error) {
+      setStatusMessage('Could not send the sign-in link. Try again.');
+      return;
+    }
+
+    setStatusMessage('Check your email for the sign-in link.');
+  };
+
+  const saveProgress = async () => {
+    if (!supabase || !user) {
+      setStatusMessage('Sign in before saving progress to the cloud.');
+      return;
+    }
+
+    if (isCloudLoading || isCloudSaving) {
+      return;
+    }
+
+    const snapshot = JSON.stringify(serializeColors(regions));
+    if (snapshot === lastCloudSnapshotRef.current) {
+      setStatusMessage('Progress is already saved.');
+      return;
+    }
+
+    setIsCloudSaving(true);
+    const { error } = await supabase.from('map_progress').upsert({
+      user_id: user.id,
+      colors: JSON.parse(snapshot) as Record<string, string | null>,
+      palette_colors: paletteColors.map((color) => color.hex),
+      updated_at: new Date().toISOString(),
+    });
+    setIsCloudSaving(false);
+
+    if (error) {
+      setStatusMessage('Cloud save failed. Local progress is still saved on this device.');
+      return;
+    }
+
+    lastCloudSnapshotRef.current = snapshot;
+    setStatusMessage('Progress saved to the cloud.');
+  };
+
+  const signOut = async () => {
+    if (!supabase) {
+      return;
+    }
+
+    setIsAuthLoading(true);
+    await supabase.auth.signOut();
+    setUser(null);
+    setIsAuthLoading(false);
+    setStatusMessage('Signed out. Progress is still saved locally on this device.');
+  };
+
   const canExportMap = completion === 100;
 
   return (
@@ -687,6 +870,62 @@ export default function HomePage() {
               animate={{ width: `${completion}%` }}
               transition={{ type: 'spring', stiffness: 110, damping: 20 }}
             />
+          </div>
+
+          <div className="mb-4 rounded-xl border border-white/20 bg-black/20 p-3">
+            {user ? (
+              <div className="space-y-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90">
+                    {isCloudLoading ? 'Loading cloud save' : isCloudSaving ? 'Saving to cloud' : 'Signed in'}
+                  </p>
+                  <p className="truncate text-xs text-slate-200/80">{user.email}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={saveProgress}
+                  disabled={isCloudLoading || isCloudSaving}
+                  className="w-full rounded-lg border border-emerald-200/35 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isCloudSaving ? 'Saving...' : 'Save Progress'}
+                </button>
+                <button
+                  type="button"
+                  onClick={signOut}
+                  disabled={isAuthLoading}
+                  className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Sign Out
+                </button>
+              </div>
+            ) : (
+              <form
+                className="space-y-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  signIn();
+                }}
+              >
+                <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90" htmlFor="email">
+                  Cloud save
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="email@example.com"
+                  className="w-full rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-cyan-200/70"
+                />
+                <button
+                  type="submit"
+                  disabled={isAuthLoading}
+                  className="w-full rounded-lg border border-cyan-200/35 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isAuthLoading ? 'Sending...' : 'Email Sign-In Link'}
+                </button>
+              </form>
+            )}
           </div>
 
           <p className="mb-4 rounded-xl border border-white/20 bg-black/20 px-3 py-2 text-xs leading-relaxed text-slate-200/95">{statusMessage}</p>
