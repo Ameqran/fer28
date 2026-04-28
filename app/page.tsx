@@ -1,10 +1,9 @@
 'use client';
 
-import { AnimatePresence, motion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import { toBlob } from 'html-to-image';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import MapTiltScene, { type TiltVector } from './MapTiltScene';
 import { ISLAND_INSET_FRAMES, ISLAND_PATHS } from './portugalIslandPaths';
 import { DISTRICT_PATHS } from './portugalDistrictPaths';
 
@@ -51,18 +50,6 @@ interface DistrictMetaItem {
     x: number;
     y: number;
   };
-}
-
-interface FillParticle {
-  id: number;
-  x: number;
-  y: number;
-  dx: number;
-  dy: number;
-  size: number;
-  spin: number;
-  duration: number;
-  color: string;
 }
 
 function SaveIcon() {
@@ -369,34 +356,22 @@ const serializeColors = (regions: RegionState[]): Record<string, string | null> 
 export default function HomePage() {
   const [paletteColors, setPaletteColors] = useState<PaletteColor[]>(BASE_PALETTE_COLORS);
   const [regions, setRegions] = useState<RegionState[]>(() => createInitialRegions(BASE_PALETTE_COLORS));
-  const [activePaletteId, setActivePaletteId] = useState<string | null>(null);
   const [history, setHistory] = useState<Array<Record<string, string | null>>>([]);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string } | null>(null);
+  const [hoveredRegionId, setHoveredRegionId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('Choose a number color, then paint the same numbered region.');
   const [celebrated, setCelebrated] = useState(false);
-  const [tilt, setTilt] = useState<TiltVector>({ x: 0, y: 0 });
-  const [fillParticles, setFillParticles] = useState<FillParticle[]>([]);
   const [isExportingMap, setIsExportingMap] = useState(false);
-  const [isPointerDown, setIsPointerDown] = useState(false);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
-  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
   const [isPaletteReady, setIsPaletteReady] = useState(false);
 
   const mapCanvasRef = useRef<HTMLDivElement>(null);
-  const particleIdRef = useRef(0);
   const saveTimeoutRef = useRef<number | null>(null);
   const lastSavedSnapshotRef = useRef<string>('');
-  const canTiltForDevice = !prefersReducedMotion && !isCoarsePointer;
   const paletteSignature = useMemo(
     () => paletteColors.map((color) => `${color.id}:${color.hex}`).join('|'),
     [paletteColors],
   );
   const storageKey = useMemo(() => `${STORAGE_KEY_PREFIX}:${paletteSignature}`, [paletteSignature]);
-
-  const activePalette = useMemo(
-    () => paletteColors.find((item) => item.id === activePaletteId) ?? null,
-    [activePaletteId, paletteColors],
-  );
 
   const completion = useMemo(() => {
     const correctCount = regions.filter((region) => region.currentColor?.toLowerCase() === region.defaultColor.toLowerCase()).length;
@@ -408,7 +383,6 @@ export default function HomePage() {
     setPaletteColors(nextPaletteColors);
     setRegions(createInitialRegions(nextPaletteColors));
     setHistory([]);
-    setActivePaletteId(null);
     setIsPaletteReady(true);
   }, []);
 
@@ -483,8 +457,7 @@ export default function HomePage() {
     if (completion === 100 && !celebrated) {
       setCelebrated(true);
       setStatusMessage('Perfect map completion! Mainland + islands painted. Happy 28th birthday, Fer.');
-      confetti({ particleCount: 200, spread: 110, startVelocity: 48, origin: { x: 0.15, y: 0.7 } });
-      confetti({ particleCount: 200, spread: 110, startVelocity: 48, origin: { x: 0.85, y: 0.7 } });
+      confetti({ particleCount: 90, spread: 90, startVelocity: 38, origin: { x: 0.5, y: 0.7 } });
     }
 
     if (completion < 100 && celebrated) {
@@ -492,93 +465,27 @@ export default function HomePage() {
     }
   }, [celebrated, completion]);
 
-  useEffect(() => {
-    const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const coarsePointerQuery = window.matchMedia('(pointer: coarse), (hover: none)');
-
-    const syncMotionPreference = () => setPrefersReducedMotion(reducedMotionQuery.matches);
-    const syncPointerPreference = () => setIsCoarsePointer(coarsePointerQuery.matches);
-
-    syncMotionPreference();
-    syncPointerPreference();
-
-    reducedMotionQuery.addEventListener('change', syncMotionPreference);
-    coarsePointerQuery.addEventListener('change', syncPointerPreference);
-
-    return () => {
-      reducedMotionQuery.removeEventListener('change', syncMotionPreference);
-      coarsePointerQuery.removeEventListener('change', syncPointerPreference);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!canTiltForDevice) {
-      setTilt({ x: 0, y: 0 });
-    }
-  }, [canTiltForDevice]);
-
   const recordHistory = (snapshot: RegionState[]) => {
     setHistory((prev) => [serializeColors(snapshot), ...prev].slice(0, 120));
   };
 
-  const removeFillParticle = (id: number) => {
-    setFillParticles((prev) => prev.filter((item) => item.id !== id));
-  };
-
-  const spawnFillParticles = (event: MouseEvent<SVGPathElement>, color: string) => {
-    const wrapper = mapCanvasRef.current;
-    if (!wrapper) {
-      return;
-    }
-
-    const rect = wrapper.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-
-    const freshParticles: FillParticle[] = Array.from({ length: 18 }, (_, index) => {
-      const id = particleIdRef.current + index + 1;
-      const angle = (Math.PI * 2 * index) / 18 + Math.random() * 0.6;
-      const power = 24 + Math.random() * 80;
-      return {
-        id,
-        x,
-        y,
-        dx: Math.cos(angle) * power,
-        dy: Math.sin(angle) * power - 10,
-        size: 5 + Math.random() * 8,
-        spin: -140 + Math.random() * 280,
-        duration: 0.55 + Math.random() * 0.35,
-        color,
-      };
-    });
-
-    particleIdRef.current += freshParticles.length;
-    setFillParticles((prev) => [...prev, ...freshParticles].slice(-260));
-  };
-
-  const paintRegion = (regionId: string, event: MouseEvent<SVGPathElement>) => {
+  const paintRegion = (regionId: string) => {
     const region = regions.find((item) => item.id === regionId);
-    if (!region || !activePalette) {
-      setStatusMessage('Pick a palette color first, then click the matching numbered region.');
+    if (!region) {
       return;
     }
 
-    if (activePalette.number !== region.number) {
-      setStatusMessage(
-        `Color #${activePalette.number} is for ${activePalette.regionName}. Paint region #${activePalette.number}.`,
-      );
-      updateTooltip(event, `${region.name} • #${region.number}`);
+    if (region.currentColor?.toLowerCase() === region.defaultColor.toLowerCase()) {
+      setStatusMessage(`${region.name} is already colored.`);
       return;
     }
-
-    spawnFillParticles(event, activePalette.hex);
 
     setRegions((prev) => {
       recordHistory(prev);
-      return prev.map((item) => (item.id === regionId ? { ...item, currentColor: activePalette.hex } : item));
+      return prev.map((item) => (item.id === regionId ? { ...item, currentColor: region.defaultColor } : item));
     });
 
-    setStatusMessage(`Painted ${region.name} (${region.subtitle}) with color #${activePalette.number}.`);
+    setStatusMessage(`Colored ${region.name} (${region.subtitle}) with color #${region.number}.`);
   };
 
   const clearAll = () => {
@@ -733,65 +640,44 @@ export default function HomePage() {
     }
     const rect = wrapper.getBoundingClientRect();
     setTooltip({
-      x: event.clientX - rect.left + 14,
-      y: event.clientY - rect.top - 14,
+      x: Math.max(12, Math.min(event.clientX - rect.left + 14, rect.width - 176)),
+      y: Math.max(event.clientY - rect.top - 18, 12),
       label: regionLabel,
     });
   };
 
-  const updateTilt = (event: MouseEvent<HTMLDivElement>) => {
-    if (!canTiltForDevice || isPointerDown || event.buttons > 0) {
-      return;
-    }
-
-    const wrapper = mapCanvasRef.current;
-    if (!wrapper) {
-      return;
-    }
-
-    const rect = wrapper.getBoundingClientRect();
-    const px = (event.clientX - rect.left) / rect.width;
-    const py = (event.clientY - rect.top) / rect.height;
-
-    setTilt({
-      x: (px - 0.5) * 2,
-      y: (0.5 - py) * 2,
-    });
-  };
-
-  const resetTilt = () => {
-    setTilt({ x: 0, y: 0 });
-  };
-
-  const activeNumber = activePalette?.number ?? null;
   const canExportMap = completion === 100;
 
   return (
-    <main className="relative z-10 min-h-screen px-4 py-6 md:px-8 md:py-8">
-      <div className="mx-auto mb-6 max-w-[90rem]">
+    <main className="relative z-10 min-h-screen px-3 py-3 md:px-5">
+      <div className="mx-auto mb-3 max-w-[86rem]">
         <motion.div
           initial={{ opacity: 0, y: -16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: 'easeOut' }}
-          className="rounded-3xl border border-white/20 bg-white/10 p-5 shadow-glow backdrop-blur-xl md:p-7"
+          className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 shadow-glow backdrop-blur-xl md:px-5"
         >
-          <p className="mb-2 text-sm uppercase tracking-[0.3em] text-cyan-200/90">Fer&apos;s Birthday Atlas</p>
-          <h1 className="font-[var(--font-heading)] text-3xl font-bold text-white md:text-5xl">Portugal Paint Map + Islands</h1>
-          <p className="mt-3 max-w-3xl text-sm text-slate-100/85 md:text-base">
-            Real district boundaries plus Azores and Madeira insets, with paint-by-number interactions, hover tilt in 3D, and fill particles.
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-200/90">Fer&apos;s Birthday Atlas</p>
+              <h1 className="font-[var(--font-heading)] text-2xl font-bold leading-tight text-white md:text-3xl">Portugal Paint Map + Islands</h1>
+            </div>
+            <span className="rounded-full border border-white/20 bg-slate-950/35 px-3 py-1 text-xs font-semibold text-cyan-100">
+              {completion}% complete
+            </span>
+          </div>
         </motion.div>
       </div>
 
-      <div className="mx-auto grid max-w-[90rem] gap-6 lg:grid-cols-[350px_minmax(0,1fr)]">
+      <div className="mx-auto grid max-w-[86rem] gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
         <motion.aside
-          initial={{ opacity: 0, x: -20 }}
+          initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.6 }}
-          className="rounded-3xl border border-white/20 bg-white/10 p-4 shadow-glow backdrop-blur-xl md:p-5"
+          className="order-2 rounded-2xl border border-white/20 bg-white/10 p-4 shadow-glow backdrop-blur-xl lg:sticky lg:top-4 lg:self-start"
         >
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-[var(--font-heading)] text-2xl font-semibold text-white">Palette</h2>
+            <h2 className="font-[var(--font-heading)] text-2xl font-semibold text-white">Controls</h2>
             <span className="rounded-full bg-slate-900/45 px-3 py-1 text-xs font-semibold text-cyan-100">{completion}% complete</span>
           </div>
 
@@ -803,47 +689,9 @@ export default function HomePage() {
             />
           </div>
 
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={{
-              hidden: {},
-              visible: { transition: { staggerChildren: 0.03, delayChildren: 0.1 } },
-            }}
-            className="grid max-h-[56vh] gap-2 overflow-y-auto pr-1"
-          >
-            {paletteColors.map((color) => {
-              const isActive = color.id === activePaletteId;
-              return (
-                <motion.button
-                  key={color.id}
-                  variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
-                  onClick={() => {
-                    setActivePaletteId(color.id);
-                    setStatusMessage(`Selected #${color.number}. Paint region #${color.number} (${color.regionName}).`);
-                  }}
-                  whileTap={{ scale: 0.97 }}
-                  className={`flex items-center gap-3 rounded-2xl border px-3 py-2 text-left transition-all ${
-                    isActive
-                      ? 'border-white/60 bg-white/25 shadow-[0_0_0_1px_rgba(255,255,255,0.25)]'
-                      : 'border-white/15 bg-black/15 hover:border-white/35 hover:bg-white/10'
-                  }`}
-                >
-                  <span
-                    className="h-10 w-10 shrink-0 rounded-xl border border-white/30"
-                    style={{ backgroundColor: color.hex }}
-                    aria-hidden
-                  />
-                  <span className="min-w-0">
-                    <span className="block text-sm font-semibold text-white">#{color.number} {color.regionName}</span>
-                    <span className="block text-xs text-slate-200/90">{color.displayHex}</span>
-                  </span>
-                </motion.button>
-              );
-            })}
-          </motion.div>
+          <p className="mb-4 rounded-xl border border-white/20 bg-black/20 px-3 py-2 text-xs leading-relaxed text-slate-200/95">{statusMessage}</p>
 
-          <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="mb-4 grid grid-cols-2 gap-2">
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={clearAll}
@@ -881,54 +729,37 @@ export default function HomePage() {
               whileTap={{ scale: 0.95 }}
               onClick={shareScreenshot}
               disabled={!canExportMap || isExportingMap}
-              className="rounded-xl border border-violet-200/35 bg-violet-500/20 px-3 py-2 text-sm font-semibold text-violet-100 transition-opacity hover:bg-violet-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+              className="col-span-2 rounded-xl border border-violet-200/35 bg-violet-500/20 px-3 py-2 text-sm font-semibold text-violet-100 transition-opacity hover:bg-violet-500/30 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <span className="inline-flex items-center gap-1.5">
+              <span className="inline-flex items-center justify-center gap-1.5">
                 <ShareIcon />
                 Share
               </span>
             </motion.button>
           </div>
 
-          <p className="mt-4 rounded-xl border border-white/20 bg-black/20 px-3 py-2 text-xs leading-relaxed text-slate-200/95">{statusMessage}</p>
         </motion.aside>
 
         <motion.section
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.65, ease: 'easeOut' }}
-          className="relative rounded-3xl border border-white/20 bg-white/10 p-4 shadow-glow backdrop-blur-xl md:p-8"
+          className="relative order-1 rounded-2xl border border-white/20 bg-white/10 p-3 shadow-glow backdrop-blur-xl md:p-5"
         >
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-[var(--font-heading)] text-2xl font-semibold text-white">Interactive Portugal + Islands</h3>
-            <p className="text-xs uppercase tracking-[0.22em] text-cyan-100/90">3D tilt • particles • paint by number</p>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-[var(--font-heading)] text-xl font-semibold text-white md:text-2xl">Interactive Portugal + Islands</h3>
+            <p className="text-xs uppercase tracking-[0.22em] text-cyan-100/90">hover / click to color</p>
           </div>
 
           <div
             ref={mapCanvasRef}
-            onPointerDown={() => setIsPointerDown(true)}
-            onPointerUp={() => setIsPointerDown(false)}
-            onPointerCancel={() => setIsPointerDown(false)}
-            onMouseMove={updateTilt}
             onPointerLeave={() => {
-              setIsPointerDown(false);
-              resetTilt();
+              setHoveredRegionId(null);
               setTooltip(null);
             }}
-            className="relative mx-auto max-w-[900px] overflow-hidden rounded-[28px] border border-white/15 bg-slate-950/15"
-            style={{ perspective: '1400px' }}
+            className="relative mx-auto max-w-[900px] overflow-hidden rounded-2xl border border-white/15 bg-slate-950/15"
           >
-            <MapTiltScene tilt={tilt} intensity={canTiltForDevice ? 1 : 0} subtle />
-
-            <motion.div
-              className="relative z-10"
-              animate={{
-                rotateX: (canTiltForDevice ? tilt.y : 0) * 2.2,
-                rotateY: (canTiltForDevice ? tilt.x : 0) * -2.8,
-              }}
-              transition={{ type: 'spring', stiffness: 92, damping: 26, mass: 0.8 }}
-              style={{ transformStyle: 'preserve-3d' }}
-            >
+            <div className="relative z-10">
               <svg
                 viewBox={MAP_VIEWBOX}
                 className="w-full drop-shadow-[0_26px_40px_rgba(8,10,35,0.55)]"
@@ -970,8 +801,8 @@ export default function HomePage() {
                 ))}
 
                 {regions.map((region) => {
-                  const isMatchTarget = activeNumber === region.number;
                   const isPainted = Boolean(region.currentColor);
+                  const isHovered = hoveredRegionId === region.id;
                   const xOffset = region.zone === 'mainland' ? MAINLAND_X_OFFSET : 0;
                   const labelX = region.label.x + xOffset;
                   const labelY = region.label.y;
@@ -979,34 +810,53 @@ export default function HomePage() {
                   const isIsland = region.zone === 'island';
                   const numberFont = isIsland ? 13 : isLisbon ? 14 : 17;
                   const iconFont = isIsland ? 12 : isLisbon ? 12 : 14;
-                  const regionFill = region.currentColor ?? 'rgba(255,255,255,0.08)';
-                  const regionStroke = isMatchTarget
-                    ? 'rgba(255,255,255,0.93)'
+                  const regionFill = region.currentColor ?? (isHovered ? 'rgba(125,211,252,0.24)' : 'rgba(255,255,255,0.08)');
+                  const regionStroke = isHovered
+                    ? 'rgba(255,255,255,0.98)'
                     : isPainted
                       ? 'rgba(15,23,42,0.6)'
                       : 'rgba(255,255,255,0.43)';
+                  const tooltipLabel = `${region.name} - Click to color #${region.number}`;
 
                   return (
                     <g key={region.id}>
-                      <motion.path
+                      <path
                         d={region.path}
                         transform={xOffset ? `translate(${xOffset} 0)` : undefined}
-                        onClick={(event) => paintRegion(region.id, event)}
-                        onMouseMove={(event) => updateTooltip(event, `${region.name} • ${region.subtitle}`)}
-                        fill={regionFill}
-                        fillOpacity={isPainted ? 1 : 0.9}
-                        stroke={regionStroke}
-                        strokeWidth={isMatchTarget ? 2.5 : isIsland ? 1.3 : 1.5}
-                        animate={{
-                          fill: regionFill,
-                          fillOpacity: isPainted ? 1 : 0.9,
-                          stroke: regionStroke,
+                        onClick={() => paintRegion(region.id)}
+                        onMouseEnter={(event) => {
+                          setHoveredRegionId(region.id);
+                          updateTooltip(event, tooltipLabel);
                         }}
-                        transition={{ type: 'spring', stiffness: 280, damping: 20 }}
+                        onMouseMove={(event) => updateTooltip(event, tooltipLabel)}
+                        onMouseLeave={() => {
+                          setHoveredRegionId(null);
+                          setTooltip(null);
+                        }}
+                        onFocus={() => {
+                          setHoveredRegionId(region.id);
+                          setTooltip(null);
+                        }}
+                        onBlur={() => setHoveredRegionId(null)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            paintRegion(region.id);
+                          }
+                        }}
+                        tabIndex={0}
+                        role="button"
+                        aria-label={`Click to color ${region.name}`}
+                        fill={regionFill}
+                        fillOpacity={isPainted ? 1 : isHovered ? 1 : 0.9}
+                        stroke={regionStroke}
+                        strokeWidth={isHovered ? 2.4 : isIsland ? 1.3 : 1.5}
                         style={{
                           transformBox: 'fill-box',
                           transformOrigin: 'center',
-                          transition: 'filter 300ms ease',
+                          transition: 'fill 120ms ease, stroke 120ms ease, filter 120ms ease',
+                          filter: isHovered ? 'drop-shadow(0 0 10px rgba(125,211,252,0.75))' : undefined,
+                          outline: 'none',
                         }}
                         fillRule="nonzero"
                         className="cursor-pointer"
@@ -1015,7 +865,7 @@ export default function HomePage() {
                       <circle
                         cx={labelX}
                         cy={labelY - 1}
-                        r={isMatchTarget ? 15 : 13}
+                        r={isHovered ? 14 : 13}
                         fill="rgba(8,14,30,0.62)"
                         stroke="rgba(255,255,255,0.42)"
                         strokeWidth={1}
@@ -1047,56 +897,21 @@ export default function HomePage() {
                   );
                 })}
               </svg>
-            </motion.div>
-
-            <div data-export-ignore="true" className="pointer-events-none absolute inset-0 z-20">
-              <AnimatePresence>
-                {fillParticles.map((particle) => (
-                  <motion.span
-                    key={particle.id}
-                    initial={{ x: particle.x, y: particle.y, opacity: 0.95, scale: 0.7, rotate: 0 }}
-                    animate={{
-                      x: particle.x + particle.dx,
-                      y: particle.y + particle.dy,
-                      opacity: 0,
-                      scale: 1.45,
-                      rotate: particle.spin,
-                    }}
-                    transition={{ duration: particle.duration, ease: 'easeOut' }}
-                    onAnimationComplete={() => removeFillParticle(particle.id)}
-                    className="absolute rounded-full mix-blend-screen"
-                    style={{
-                      left: 0,
-                      top: 0,
-                      width: particle.size,
-                      height: particle.size,
-                      backgroundColor: particle.color,
-                      boxShadow: `0 0 14px ${particle.color}`,
-                    }}
-                  />
-                ))}
-              </AnimatePresence>
             </div>
 
-            <AnimatePresence>
-              {tooltip && (
-                <motion.div
-                  key={tooltip.label}
-                  initial={{ opacity: 0, scale: 0.92, y: 6 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.92, y: 4 }}
-                  transition={{ duration: 0.16 }}
-                  data-export-ignore="true"
-                  className="pointer-events-none absolute z-30 rounded-lg border border-white/35 bg-slate-900/80 px-2.5 py-1 text-xs font-semibold text-cyan-100 shadow-lg backdrop-blur"
-                  style={{ left: tooltip.x, top: tooltip.y }}
-                >
-                  {tooltip.label}
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {tooltip && (
+              <div
+                data-export-ignore="true"
+                className="pointer-events-none absolute z-30 rounded-lg border border-white/35 bg-slate-900/85 px-2.5 py-1 text-xs font-semibold text-cyan-100 shadow-lg"
+                style={{ left: tooltip.x, top: tooltip.y }}
+              >
+                {tooltip.label}
+              </div>
+            )}
           </div>
         </motion.section>
       </div>
     </main>
   );
 }
+
