@@ -346,10 +346,11 @@ export default function HomePage() {
   const [history, setHistory] = useState<Array<Record<string, string | null>>>([]);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string } | null>(null);
   const [hoveredRegionId, setHoveredRegionId] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string>('Choose a number color, then paint the same numbered region.');
+  const [statusMessage, setStatusMessage] = useState<string>('Choose a place on the map and start revealing your birthday gift.');
   const [celebrated, setCelebrated] = useState(false);
   const [isExportingMap, setIsExportingMap] = useState(false);
   const [isPaletteReady, setIsPaletteReady] = useState(false);
+  const [hasOpenedGift, setHasOpenedGift] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [isAuthLoading, setIsAuthLoading] = useState(false);
@@ -446,12 +447,12 @@ export default function HomePage() {
           .maybeSingle<CloudProgressRow>();
 
         if (error) {
-          setStatusMessage('Signed in, but cloud progress could not load. Check the Supabase table setup.');
+          setStatusMessage('Signed in, but your saved map could not load yet.');
           return;
         }
 
         if (!data) {
-          setStatusMessage('Signed in. Your progress will save to the cloud.');
+          setStatusMessage('Signed in. Save your map whenever you want to keep it.');
           return;
         }
 
@@ -469,7 +470,7 @@ export default function HomePage() {
         );
         lastSavedSnapshotRef.current = snapshot;
         lastCloudSnapshotRef.current = snapshot;
-        setStatusMessage('Cloud progress loaded.');
+        setStatusMessage('Your saved birthday map is back.');
       } finally {
         setIsCloudLoading(false);
       }
@@ -522,7 +523,7 @@ export default function HomePage() {
   useEffect(() => {
     if (completion === 100 && !celebrated) {
       setCelebrated(true);
-      setStatusMessage('Perfect map completion! Mainland + islands painted. Happy 28th birthday, Fer.');
+      setStatusMessage('You filled the whole Portugal map. Happy 28th birthday, Fer.');
       confetti({ particleCount: 90, spread: 90, startVelocity: 38, origin: { x: 0.5, y: 0.7 } });
     }
 
@@ -542,7 +543,7 @@ export default function HomePage() {
     }
 
     if (region.currentColor?.toLowerCase() === region.defaultColor.toLowerCase()) {
-      setStatusMessage(`${region.name} is already colored.`);
+      setStatusMessage(`${region.name} is already part of your map.`);
       return;
     }
 
@@ -551,7 +552,7 @@ export default function HomePage() {
       return prev.map((item) => (item.id === regionId ? { ...item, currentColor: region.defaultColor } : item));
     });
 
-    setStatusMessage(`Colored ${region.name} (${region.subtitle}) with color #${region.number}.`);
+    setStatusMessage(`${region.name} is now part of your birthday map.`);
   };
 
   const clearAll = () => {
@@ -559,7 +560,7 @@ export default function HomePage() {
       recordHistory(prev);
       return prev.map((region) => ({ ...region, currentColor: null }));
     });
-    setStatusMessage('All regions cleared.');
+    setStatusMessage('The map is fresh again.');
   };
 
   const autoFill = () => {
@@ -567,7 +568,7 @@ export default function HomePage() {
       recordHistory(prev);
       return prev.map((region) => ({ ...region, currentColor: region.defaultColor }));
     });
-    setStatusMessage('Auto-fill applied to mainland + islands.');
+    setStatusMessage('Portugal is filled for you.');
   };
 
   const undoLast = () => {
@@ -582,7 +583,7 @@ export default function HomePage() {
           currentColor: typeof lastState[region.id] === 'string' ? lastState[region.id] : null,
         })),
       );
-      setStatusMessage('Last action undone.');
+      setStatusMessage('Last color removed.');
       return rest;
     });
   };
@@ -626,7 +627,7 @@ export default function HomePage() {
 
   const saveScreenshot = async () => {
     if (coloredCount === 0) {
-      setStatusMessage('Color at least one region to unlock Save PNG and Share.');
+      setStatusMessage('Color at least one place before saving a picture.');
       return;
     }
 
@@ -640,9 +641,9 @@ export default function HomePage() {
       const blob = await captureMapScreenshot();
       const fileName = getScreenshotName();
       downloadBlob(blob, fileName);
-      setStatusMessage('PNG screenshot saved.');
+      setStatusMessage('Your map picture is saved.');
     } catch {
-      setStatusMessage('Could not save screenshot. Try again.');
+      setStatusMessage('Could not save the picture. Try again.');
     } finally {
       setIsExportingMap(false);
     }
@@ -650,7 +651,7 @@ export default function HomePage() {
 
   const shareScreenshot = async () => {
     if (coloredCount === 0) {
-      setStatusMessage('Color at least one region to unlock Save PNG and Share.');
+      setStatusMessage('Color at least one place before sharing your map.');
       return;
     }
 
@@ -673,26 +674,26 @@ export default function HomePage() {
           text: `Completion: ${completion}%`,
           files: [file],
         });
-        setStatusMessage('Screenshot shared successfully.');
+        setStatusMessage('Your map was shared.');
         return;
       }
 
       if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        setStatusMessage('Screenshot copied to clipboard. Paste it to share.');
+        setStatusMessage('Your map was copied. Paste it anywhere you want to share.');
         return;
       }
 
       downloadBlob(blob, fileName);
-      setStatusMessage('Sharing is not supported here. Screenshot downloaded instead.');
+      setStatusMessage('Sharing is not supported here, so the picture was downloaded.');
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         setStatusMessage('Share canceled.');
       } else if (blob) {
         downloadBlob(blob, fileName);
-        setStatusMessage('Share failed, screenshot downloaded instead.');
+        setStatusMessage('Share failed, so the picture was downloaded instead.');
       } else {
-        setStatusMessage('Could not share screenshot. Try again.');
+        setStatusMessage('Could not share the map. Try again.');
       }
     } finally {
       setIsExportingMap(false);
@@ -714,13 +715,13 @@ export default function HomePage() {
 
   const signIn = async () => {
     if (!supabase) {
-      setStatusMessage('Supabase environment variables are missing.');
+      setStatusMessage('Cloud save is not ready yet.');
       return;
     }
 
     const trimmedEmail = email.trim();
     if (!trimmedEmail) {
-      setStatusMessage('Enter an email to receive a sign-in link.');
+      setStatusMessage('Enter your email to keep this map for later.');
       return;
     }
 
@@ -744,7 +745,7 @@ export default function HomePage() {
 
   const saveProgress = async () => {
     if (!supabase || !user) {
-      setStatusMessage('Sign in before saving progress to the cloud.');
+      setStatusMessage('Sign in before saving your map online.');
       return;
     }
 
@@ -754,7 +755,7 @@ export default function HomePage() {
 
     const snapshot = JSON.stringify(serializeColors(regions));
     if (snapshot === lastCloudSnapshotRef.current) {
-      setStatusMessage('Progress is already saved.');
+      setStatusMessage('Your map is already saved.');
       return;
     }
 
@@ -768,12 +769,12 @@ export default function HomePage() {
     setIsCloudSaving(false);
 
     if (error) {
-      setStatusMessage('Cloud save failed. Local progress is still saved on this device.');
+      setStatusMessage('Online save failed. Your map is still saved on this device.');
       return;
     }
 
     lastCloudSnapshotRef.current = snapshot;
-    setStatusMessage('Progress saved to the cloud.');
+    setStatusMessage('Your birthday map is saved online.');
   };
 
   const signOut = async () => {
@@ -785,10 +786,60 @@ export default function HomePage() {
     await supabase.auth.signOut();
     setUser(null);
     setIsAuthLoading(false);
-    setStatusMessage('Signed out. Progress is still saved locally on this device.');
+    setStatusMessage('Signed out. Your map is still saved on this device.');
   };
 
   const canExportMap = coloredCount > 0;
+
+  if (!hasOpenedGift) {
+    return (
+      <main className="relative z-10 flex min-h-screen items-center justify-center px-4 py-6">
+        <motion.section
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, ease: 'easeOut' }}
+          className="grid w-full max-w-5xl items-center gap-6 rounded-2xl border border-white/20 bg-white/10 p-5 shadow-glow backdrop-blur-xl md:grid-cols-[minmax(0,1fr)_360px] md:p-8"
+        >
+          <div className="min-w-0">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100/90">A birthday gift for Fer</p>
+            <h1 className="font-[var(--font-heading)] text-4xl font-bold leading-tight text-white md:text-6xl">
+              Happy 28th birthday, my love.
+            </h1>
+            <p className="mt-4 max-w-2xl text-base leading-7 text-slate-100/90 md:text-lg">
+              I made you a small Portugal map to discover, color, save, and keep. Each place is a little piece of the trip I imagine for us.
+            </p>
+            <button
+              type="button"
+              onClick={() => setHasOpenedGift(true)}
+              className="mt-7 rounded-xl border border-cyan-200/45 bg-cyan-300 px-5 py-3 text-sm font-extrabold text-slate-950 shadow-[0_16px_40px_rgba(34,211,238,0.22)] transition hover:bg-cyan-200"
+            >
+              Open your Portugal map
+            </button>
+          </div>
+
+          <div className="relative mx-auto w-full max-w-[320px] overflow-hidden rounded-2xl border border-white/20 bg-slate-950/25 p-3">
+            <svg viewBox={MAP_VIEWBOX} className="w-full drop-shadow-[0_18px_28px_rgba(8,10,35,0.5)]" aria-hidden>
+              <rect x={0} y={0} width={MAP_WIDTH} height={MAP_HEIGHT} fill="rgba(34,211,238,0.09)" rx={24} />
+              {regions.map((region) => {
+                const xOffset = region.zone === 'mainland' ? MAINLAND_X_OFFSET : 0;
+                return (
+                  <path
+                    key={region.id}
+                    d={region.path}
+                    transform={xOffset ? `translate(${xOffset} 0)` : undefined}
+                    fill={region.defaultColor}
+                    fillOpacity={region.number % 3 === 0 ? 0.7 : 0.28}
+                    stroke="rgba(255,255,255,0.45)"
+                    strokeWidth={1.2}
+                  />
+                );
+              })}
+            </svg>
+          </div>
+        </motion.section>
+      </main>
+    );
+  }
 
   return (
     <main className="relative z-10 min-h-screen px-3 py-3 md:px-5">
@@ -801,8 +852,8 @@ export default function HomePage() {
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-200/90">Fer&apos;s Birthday Atlas</p>
-              <h1 className="font-[var(--font-heading)] text-2xl font-bold leading-tight text-white md:text-3xl">Portugal Paint Map + Islands</h1>
+              <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-200/90">Fer&apos;s birthday gift</p>
+              <h1 className="font-[var(--font-heading)] text-2xl font-bold leading-tight text-white md:text-3xl">Your Portugal Map</h1>
             </div>
             <span className="rounded-full border border-white/20 bg-slate-950/35 px-3 py-1 text-xs font-semibold text-cyan-100">
               {completion}% complete
@@ -819,7 +870,7 @@ export default function HomePage() {
           className="order-2 rounded-2xl border border-white/20 bg-white/10 p-4 shadow-glow backdrop-blur-xl lg:sticky lg:top-4 lg:self-start"
         >
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-[var(--font-heading)] text-2xl font-semibold text-white">Controls</h2>
+            <h2 className="font-[var(--font-heading)] text-2xl font-semibold text-white">Your Map</h2>
             <span className="rounded-full bg-slate-900/45 px-3 py-1 text-xs font-semibold text-cyan-100">{completion}% complete</span>
           </div>
 
@@ -836,7 +887,7 @@ export default function HomePage() {
               <div className="space-y-3">
                 <div className="min-w-0">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90">
-                    {isCloudLoading ? 'Loading cloud save' : isCloudSaving ? 'Saving to cloud' : 'Signed in'}
+                    {isCloudLoading ? 'Loading your map' : isCloudSaving ? 'Saving your map' : 'Signed in'}
                   </p>
                   <p className="truncate text-xs text-slate-200/80">{user.email}</p>
                 </div>
@@ -846,7 +897,7 @@ export default function HomePage() {
                   disabled={isCloudLoading || isCloudSaving}
                   className="w-full rounded-lg border border-emerald-200/35 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isCloudSaving ? 'Saving...' : 'Save Progress'}
+                  {isCloudSaving ? 'Saving...' : 'Save Map'}
                 </button>
                 <button
                   type="button"
@@ -866,7 +917,7 @@ export default function HomePage() {
                 }}
               >
                 <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90" htmlFor="email">
-                  Cloud save
+                  Keep your map
                 </label>
                 <input
                   id="email"
@@ -881,7 +932,7 @@ export default function HomePage() {
                   disabled={isAuthLoading}
                   className="w-full rounded-lg border border-cyan-200/35 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isAuthLoading ? 'Sending...' : 'Email Sign-In Link'}
+                  {isAuthLoading ? 'Sending...' : 'Send Sign-In Link'}
                 </button>
               </form>
             )}
@@ -895,14 +946,14 @@ export default function HomePage() {
               onClick={clearAll}
               className="rounded-xl border border-rose-200/35 bg-rose-500/20 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-500/30"
             >
-              Clear All
+              Start Over
             </motion.button>
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={autoFill}
               className="rounded-xl border border-emerald-200/35 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/30"
             >
-              Auto-Fill
+              Fill Map
             </motion.button>
             <motion.button
               whileTap={{ scale: 0.95 }}
@@ -920,7 +971,7 @@ export default function HomePage() {
             >
               <span className="inline-flex items-center gap-1.5">
                 <SaveIcon />
-                {isExportingMap ? 'Working...' : 'Save PNG'}
+                {isExportingMap ? 'Working...' : 'Save Picture'}
               </span>
             </motion.button>
             <motion.button
@@ -945,8 +996,8 @@ export default function HomePage() {
           className="relative order-1 rounded-2xl border border-white/20 bg-white/10 p-3 shadow-glow backdrop-blur-xl md:p-5"
         >
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-[var(--font-heading)] text-xl font-semibold text-white md:text-2xl">Interactive Portugal + Islands</h3>
-            <p className="text-xs uppercase tracking-[0.22em] text-cyan-100/90">hover / click to color</p>
+            <h3 className="font-[var(--font-heading)] text-xl font-semibold text-white md:text-2xl">Portugal, for you</h3>
+            <p className="text-xs uppercase tracking-[0.22em] text-cyan-100/90">click a place to color it</p>
           </div>
 
           <div
