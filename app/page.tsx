@@ -767,10 +767,11 @@ export default function HomePage() {
     }
 
     setIsAuthLoading(true);
+    const redirectUrl = `${window.location.origin}${window.location.pathname}`;
     const { error } = await supabase.auth.signInWithOtp({
       email: trimmedEmail,
       options: {
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: redirectUrl,
       },
     });
     setIsAuthLoading(false);
