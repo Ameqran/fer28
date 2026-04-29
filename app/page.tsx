@@ -58,6 +58,8 @@ interface LandmarkMoment {
 interface LandmarkDraft {
   x: number;
   y: number;
+  panelX: number;
+  panelY: number;
   title: string;
   note: string;
 }
@@ -80,10 +82,10 @@ function SaveIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden className="h-4 w-4">
       <path
-        d="M5 4h10l4 4v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm9 0v5H8V4m4 8v5m0 0-2-2m2 2 2-2"
+        d="M12 4v10m0 0 4-4m-4 4-4-4M5 17v1.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V17"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.8"
+        strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -95,10 +97,70 @@ function ShareIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden className="h-4 w-4">
       <path
-        d="M14 5h5v5m0-5-7 7M7 12a3 3 0 1 0 0 6h10a3 3 0 0 0 0-6h-1"
+        d="M8.6 10.7 15.4 7m-6.8 6.3 6.8 3.7M7 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Zm10-6a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Zm0 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.8"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function PinIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-4 w-4">
+      <path
+        d="M12 21s5.5-5.3 5.5-10.2a5.5 5.5 0 1 0-11 0C6.5 15.7 12 21 12 21Zm0-8.4a1.9 1.9 0 1 0 0-3.8 1.9 1.9 0 0 0 0 3.8Zm6-8.6 1-2 1 2 2 1-2 1-1 2-1-2-2-1 2-1Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function UndoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-4 w-4">
+      <path
+        d="M8 8H4V4m.6 4A8.5 8.5 0 1 1 4 14.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function FillIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-4 w-4">
+      <path
+        d="M4 16.5 14.5 6l3.5 3.5L7.5 20H4v-3.5Zm8.5-8.5 3.5 3.5M18 15s2 2.2 2 3.5a2 2 0 0 1-4 0c0-1.3 2-3.5 2-3.5Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ResetIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-4 w-4">
+      <path
+        d="M6 7h12m-9 0V5.8A1.8 1.8 0 0 1 10.8 4h2.4A1.8 1.8 0 0 1 15 5.8V7m-7 3 .6 8.2A2 2 0 0 0 10.6 20h2.8a2 2 0 0 0 2-1.8L16 10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -371,6 +433,8 @@ const serializeColors = (regions: RegionState[]): Record<string, string | null> 
     return acc;
   }, {});
 
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), Math.max(min, max));
+
 export default function HomePage() {
   const [paletteColors, setPaletteColors] = useState<PaletteColor[]>(BASE_PALETTE_COLORS);
   const [regions, setRegions] = useState<RegionState[]>(() => createInitialRegions(BASE_PALETTE_COLORS));
@@ -386,7 +450,7 @@ export default function HomePage() {
   const [isAddingLandmark, setIsAddingLandmark] = useState(false);
   const [landmarkDraft, setLandmarkDraft] = useState<LandmarkDraft | null>(null);
   const [activeLandmarkId, setActiveLandmarkId] = useState<string | null>(null);
-  const [isActionsOpen, setIsActionsOpen] = useState(false);
+  const [actionMenuPosition, setActionMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [isAuthLoading, setIsAuthLoading] = useState(false);
@@ -788,17 +852,30 @@ export default function HomePage() {
     });
   };
 
+  const toggleLandmarkMode = () => {
+    setIsAddingLandmark((prev) => !prev);
+    setLandmarkDraft(null);
+    setStatusMessage(isAddingLandmark ? 'Moment marking paused.' : 'Click the map where this memory belongs.');
+  };
+
   const createLandmarkDraft = (event: MouseEvent<HTMLDivElement>) => {
     if (!isAddingLandmark || landmarkDraft) {
       return;
     }
 
     const rect = event.currentTarget.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * MAP_WIDTH;
-    const y = ((event.clientY - rect.top) / rect.height) * MAP_HEIGHT;
+    const clickX = event.clientX - rect.left;
+    const clickY = event.clientY - rect.top;
+    const x = (clickX / rect.width) * MAP_WIDTH;
+    const y = (clickY / rect.height) * MAP_HEIGHT;
+    const panelWidth = Math.min(288, Math.max(220, rect.width - 24));
+    const panelHeight = Math.min(224, Math.max(196, rect.height - 24));
+    const preferredPanelY = clickY + 18 + panelHeight > rect.height - 12 ? clickY - panelHeight - 18 : clickY + 18;
     setLandmarkDraft({
       x: Math.max(0, Math.min(MAP_WIDTH, x)),
       y: Math.max(0, Math.min(MAP_HEIGHT, y)),
+      panelX: clamp(clickX - panelWidth / 2, 12, rect.width - panelWidth - 12),
+      panelY: clamp(preferredPanelY, 12, rect.height - panelHeight - 12),
       title: '',
       note: '',
     });
@@ -1001,10 +1078,62 @@ export default function HomePage() {
           transition={{ duration: 0.6, ease: 'easeOut' }}
           className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 shadow-glow backdrop-blur-xl md:px-5"
         >
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
               <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-200/90">Fer&apos;s birthday gift</p>
               <h1 className="font-[var(--font-heading)] text-2xl font-bold leading-tight text-white md:text-3xl">Your Portugal Map</h1>
+            </div>
+            <div className="w-full md:w-auto md:max-w-[28rem]">
+              {user ? (
+                <div className="flex flex-col gap-2 rounded-xl border border-white/15 bg-slate-950/25 p-2 sm:flex-row sm:items-center">
+                  <p className="min-w-0 flex-1 truncate px-1 text-xs text-slate-100/85 md:max-w-44">{user.email}</p>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0">
+                    <button
+                      type="button"
+                      onClick={saveProgress}
+                      disabled={isCloudLoading || isCloudSaving}
+                      className="rounded-lg border border-emerald-200/35 bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isCloudSaving ? 'Saving...' : 'Save Map'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={signOut}
+                      disabled={isAuthLoading}
+                      className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Sign Out
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <form
+                  className="grid gap-2 rounded-xl border border-white/15 bg-slate-950/25 p-2 sm:grid-cols-[minmax(0,1fr)_auto]"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    signIn();
+                  }}
+                >
+                  <label className="sr-only" htmlFor="header-email">
+                    Keep your map
+                  </label>
+                  <input
+                    id="header-email"
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="email@example.com"
+                    className="min-w-0 rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-cyan-200/70"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isAuthLoading}
+                    className="rounded-lg border border-cyan-200/35 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isAuthLoading ? 'Sending...' : 'Sign In'}
+                  </button>
+                </form>
+              )}
             </div>
           </div>
         </motion.div>
@@ -1022,166 +1151,114 @@ export default function HomePage() {
             <p className="text-xs uppercase tracking-[0.22em] text-cyan-100/90">color places / mark moments</p>
           </div>
 
+          <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1040px)_minmax(14rem,17rem)] xl:justify-center">
           <div
             ref={mapCanvasRef}
             onPointerLeave={() => {
               setHoveredRegionId(null);
               setTooltip(null);
             }}
-            className="relative mx-auto max-w-[900px] overflow-hidden rounded-2xl border border-white/15 bg-slate-950/15"
+            className="relative mx-auto w-full max-w-[1040px] overflow-hidden rounded-2xl border border-white/15 bg-slate-950/15"
           >
-            <div data-export-ignore="true" className="pointer-events-none absolute left-3 top-3 z-30">
-              <div className="rounded-full border border-white/20 bg-slate-950/75 px-3 py-2 shadow-xl backdrop-blur">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/80">Progress</p>
-                <p className="text-sm font-bold text-white">{completion}% · {landmarks.length} moments</p>
+            <div data-export-ignore="true" className="pointer-events-none absolute inset-x-0 top-0 z-30">
+              <div className="h-1.5 overflow-hidden bg-white/10">
+                <div
+                  className="h-full rounded-r-full bg-gradient-to-r from-cyan-200 via-rose-200 to-amber-200 shadow-[0_0_18px_rgba(103,232,249,0.45)] transition-[width] duration-500"
+                  style={{ width: `${completion}%` }}
+                />
+                <p className="sr-only">{completion}% complete with {landmarks.length} moments</p>
+              </div>
+              <div className="absolute right-3 top-3 rounded-full border border-white/15 bg-slate-950/65 px-2.5 py-1 text-[11px] font-bold text-white shadow-xl backdrop-blur">
+                {completion}% / {landmarks.length} moments
               </div>
             </div>
 
-            <div data-export-ignore="true" className="absolute right-3 top-3 z-40 flex items-center gap-2">
-              <motion.button
-                whileTap={{ scale: 0.96 }}
-                type="button"
-                onClick={() => {
-                  setIsAddingLandmark((prev) => !prev);
-                  setLandmarkDraft(null);
-                  setIsActionsOpen(false);
-                  setStatusMessage(isAddingLandmark ? 'Moment marking paused.' : 'Click the map where this memory belongs.');
-                }}
-                className={`rounded-full border px-4 py-2 text-sm font-extrabold shadow-xl backdrop-blur transition ${
-                  isAddingLandmark
-                    ? 'border-cyan-200/70 bg-cyan-300 text-slate-950'
-                    : 'border-white/25 bg-white/90 text-slate-950 hover:bg-cyan-100'
-                }`}
-              >
-                {isAddingLandmark ? 'Cancel' : '+ Moment'}
-              </motion.button>
-              <motion.button
-                whileTap={{ scale: 0.96 }}
-                type="button"
-                onClick={() => setIsActionsOpen((prev) => !prev)}
-                className="rounded-full border border-white/25 bg-slate-950/75 px-3 py-2 text-sm font-bold text-white shadow-xl backdrop-blur hover:bg-slate-900/90"
-                aria-label="Open map actions"
-              >
-                ···
-              </motion.button>
-            </div>
-
-            {isActionsOpen && (
+            {actionMenuPosition && (
               <div
                 data-export-ignore="true"
-                className="absolute right-3 top-16 z-40 w-[min(20rem,calc(100%-1.5rem))] rounded-2xl border border-white/25 bg-slate-950/90 p-3 text-left shadow-2xl backdrop-blur"
+                onContextMenu={(event) => event.stopPropagation()}
+                className="absolute z-50 w-[min(20rem,calc(100%-1.5rem))] rounded-2xl border border-white/25 bg-slate-950/90 p-3 text-left shadow-2xl backdrop-blur"
+                style={{
+                  left: actionMenuPosition.x,
+                  top: actionMenuPosition.y,
+                }}
               >
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90">Map actions</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90">Map menu</p>
                     <p className="mt-1 text-xs leading-5 text-slate-200/80">{statusMessage}</p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setIsActionsOpen(false)}
-                    className="rounded-full border border-white/15 bg-white/10 px-2 py-1 text-xs font-bold text-white hover:bg-white/15"
+                    onClick={() => setActionMenuPosition(null)}
+                    className="grid h-7 w-7 place-items-center rounded-full border border-white/15 bg-white/10 text-xs font-bold text-white hover:bg-white/15"
                     aria-label="Close map actions"
                   >
                     ×
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-5 gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleLandmarkMode}
+                    className={`grid h-10 place-items-center rounded-xl border text-sm shadow-lg transition ${
+                      isAddingLandmark
+                        ? 'border-cyan-200/70 bg-cyan-300 text-slate-950'
+                        : 'border-white/15 bg-white/10 text-cyan-100 hover:bg-white/15'
+                    }`}
+                    aria-label={isAddingLandmark ? 'Cancel adding moment' : 'Add moment'}
+                    title={isAddingLandmark ? 'Cancel moment' : 'Add moment'}
+                  >
+                    <PinIcon />
+                  </button>
                   <button
                     type="button"
                     onClick={undoLast}
                     disabled={history.length === 0}
-                    className="rounded-lg border border-sky-200/35 bg-sky-500/20 px-3 py-2 text-sm font-semibold text-sky-100 hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="grid h-10 place-items-center rounded-xl border border-white/15 bg-white/10 text-sky-100 shadow-lg hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Undo"
+                    title="Undo"
                   >
-                    Undo
+                    <UndoIcon />
                   </button>
                   <button
                     type="button"
                     onClick={autoFill}
-                    className="rounded-lg border border-emerald-200/35 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/30"
+                    className="grid h-10 place-items-center rounded-xl border border-white/15 bg-white/10 text-emerald-100 shadow-lg hover:bg-white/15"
+                    aria-label="Fill map"
+                    title="Fill map"
                   >
-                    Fill Map
+                    <FillIcon />
                   </button>
                   <button
                     type="button"
                     onClick={saveScreenshot}
                     disabled={!canExportMap || isExportingMap}
-                    className="rounded-lg border border-fuchsia-200/35 bg-fuchsia-500/20 px-3 py-2 text-sm font-semibold text-fuchsia-100 hover:bg-fuchsia-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="grid h-10 place-items-center rounded-xl border border-white/15 bg-white/10 text-fuchsia-100 shadow-lg hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Save PNG"
+                    title="Save PNG"
                   >
-                    <span className="inline-flex items-center gap-1.5">
-                      <SaveIcon />
-                      Picture
-                    </span>
+                    <SaveIcon />
                   </button>
                   <button
                     type="button"
                     onClick={shareScreenshot}
                     disabled={!canExportMap || isExportingMap}
-                    className="rounded-lg border border-violet-200/35 bg-violet-500/20 px-3 py-2 text-sm font-semibold text-violet-100 hover:bg-violet-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="grid h-10 place-items-center rounded-xl border border-white/15 bg-white/10 text-violet-100 shadow-lg hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Share map"
+                    title="Share"
                   >
-                    <span className="inline-flex items-center gap-1.5">
-                      <ShareIcon />
-                      Share
-                    </span>
+                    <ShareIcon />
                   </button>
                   <button
                     type="button"
                     onClick={clearAll}
-                    className="col-span-2 rounded-lg border border-rose-200/35 bg-rose-500/20 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-500/30"
+                    className="col-span-5 inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-white/15"
                   >
-                    Start Over
+                    <ResetIcon />
+                    Start over
                   </button>
-                </div>
-
-                <div className="mt-3 rounded-xl border border-white/15 bg-white/5 p-3">
-                  {user ? (
-                    <div className="space-y-2">
-                      <p className="truncate text-xs text-slate-200/80">{user.email}</p>
-                      <button
-                        type="button"
-                        onClick={saveProgress}
-                        disabled={isCloudLoading || isCloudSaving}
-                        className="w-full rounded-lg border border-emerald-200/35 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {isCloudSaving ? 'Saving...' : 'Save Map'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={signOut}
-                        disabled={isAuthLoading}
-                        className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Sign Out
-                      </button>
-                    </div>
-                  ) : (
-                    <form
-                      className="space-y-2"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        signIn();
-                      }}
-                    >
-                      <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90" htmlFor="email">
-                        Keep your map
-                      </label>
-                      <input
-                        id="email"
-                        type="email"
-                        value={email}
-                        onChange={(event) => setEmail(event.target.value)}
-                        placeholder="email@example.com"
-                        className="w-full rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-cyan-200/70"
-                      />
-                      <button
-                        type="submit"
-                        disabled={isAuthLoading}
-                        className="w-full rounded-lg border border-cyan-200/35 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {isAuthLoading ? 'Sending...' : 'Send Sign-In Link'}
-                      </button>
-                    </form>
-                  )}
                 </div>
 
                 {landmarks.length > 0 && (
@@ -1192,7 +1269,7 @@ export default function HomePage() {
                         type="button"
                         onClick={() => {
                           setActiveLandmarkId(landmark.id);
-                          setIsActionsOpen(false);
+                          setActionMenuPosition(null);
                         }}
                         className="max-w-full truncate rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-xs text-slate-100 hover:bg-white/15"
                       >
@@ -1369,10 +1446,14 @@ export default function HomePage() {
 
               {activeLandmarkId && (
                 <div
-                  className="pointer-events-auto absolute z-30 w-56 -translate-x-1/2 rounded-2xl border border-white/25 bg-slate-950/90 p-3 text-left shadow-2xl backdrop-blur"
+                  className="pointer-events-auto absolute z-30 w-56 rounded-2xl border border-white/25 bg-slate-950/90 p-3 text-left shadow-2xl backdrop-blur"
                   style={{
-                    left: `${((landmarks.find((landmark) => landmark.id === activeLandmarkId)?.x ?? MAP_WIDTH / 2) / MAP_WIDTH) * 100}%`,
-                    top: `calc(${((landmarks.find((landmark) => landmark.id === activeLandmarkId)?.y ?? MAP_HEIGHT / 2) / MAP_HEIGHT) * 100}% + 12px)`,
+                    left: `clamp(0.75rem, ${
+                      ((landmarks.find((landmark) => landmark.id === activeLandmarkId)?.x ?? MAP_WIDTH / 2) / MAP_WIDTH) * 100
+                    }%, calc(100% - 14.75rem))`,
+                    top: `clamp(0.75rem, calc(${
+                      ((landmarks.find((landmark) => landmark.id === activeLandmarkId)?.y ?? MAP_HEIGHT / 2) / MAP_HEIGHT) * 100
+                    }% + 12px), calc(100% - 12rem))`,
                   }}
                 >
                   {(() => {
@@ -1383,7 +1464,17 @@ export default function HomePage() {
 
                     return (
                       <>
-                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-rose-100/90">Moment</p>
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-rose-100/90">Moment</p>
+                          <button
+                            type="button"
+                            onClick={() => setActiveLandmarkId(null)}
+                            className="rounded-full border border-white/15 bg-white/10 px-2 text-xs font-bold text-white hover:bg-white/15"
+                            aria-label="Close moment"
+                          >
+                            x
+                          </button>
+                        </div>
                         <h4 className="mt-1 font-[var(--font-heading)] text-xl font-bold text-white">{landmark.title}</h4>
                         {landmark.note && <p className="mt-2 text-sm leading-5 text-slate-200/90">{landmark.note}</p>}
                         <button
@@ -1424,26 +1515,26 @@ export default function HomePage() {
                 </div>
                 <div
                   data-export-ignore="true"
-                  className="absolute z-40 w-[min(22rem,calc(100%-2rem))] -translate-x-1/2 rounded-2xl border border-white/25 bg-slate-950/92 p-4 text-left shadow-2xl backdrop-blur"
+                  className="absolute z-40 w-[min(18rem,calc(100%-1.5rem))] rounded-xl border border-cyan-100/35 bg-slate-950 p-3 text-left text-white shadow-2xl"
                   style={{
-                    left: `${(landmarkDraft.x / MAP_WIDTH) * 100}%`,
-                    top: `calc(${(landmarkDraft.y / MAP_HEIGHT) * 100}% + 14px)`,
+                    left: landmarkDraft.panelX,
+                    top: landmarkDraft.panelY,
                   }}
                 >
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90">Mark this moment</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-100/85">Mark this moment</p>
                   <input
                     value={landmarkDraft.title}
                     onChange={(event) => setLandmarkDraft((prev) => (prev ? { ...prev, title: event.target.value } : prev))}
                     maxLength={34}
                     placeholder="Moment name"
-                    className="mt-3 w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white outline-none placeholder:text-slate-400 focus:border-cyan-200/70"
+                    className="mt-2 w-full rounded-lg border border-white/15 bg-white/10 px-2.5 py-2 text-sm font-semibold text-white outline-none placeholder:text-slate-400 focus:border-cyan-200/70"
                   />
                   <textarea
                     value={landmarkDraft.note}
                     onChange={(event) => setLandmarkDraft((prev) => (prev ? { ...prev, note: event.target.value } : prev))}
                     maxLength={120}
                     placeholder="A tiny note, memory, or reason this place matters"
-                    className="mt-2 min-h-20 w-full resize-none rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-cyan-200/70"
+                    className="mt-2 min-h-16 w-full resize-none rounded-lg border border-white/15 bg-white/10 px-2.5 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-400 focus:border-cyan-200/70"
                   />
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button
@@ -1459,7 +1550,7 @@ export default function HomePage() {
                     <button
                       type="button"
                       onClick={saveLandmark}
-                      className="rounded-lg border border-rose-200/45 bg-rose-300 px-3 py-2 text-sm font-extrabold text-slate-950 hover:bg-rose-200"
+                      className="rounded-lg border border-cyan-200/70 bg-cyan-300 px-3 py-2 text-sm font-extrabold text-slate-950 hover:bg-cyan-200"
                     >
                       Save Moment
                     </button>
@@ -1477,6 +1568,126 @@ export default function HomePage() {
                 {tooltip.label}
               </div>
             )}
+          </div>
+
+          <aside className="rounded-xl border border-white/15 bg-slate-950/80 p-3 text-left shadow-xl">
+            <div className="space-y-2.5">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/80">Progress</p>
+                <div className="mt-1 flex items-end justify-between gap-2">
+                  <p className="font-[var(--font-heading)] text-2xl font-bold text-white">{completion}%</p>
+                  <p className="pb-1 text-[11px] text-slate-200/75">
+                    {coloredCount} colored / {landmarks.length} moments
+                  </p>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-cyan-200 via-rose-200 to-amber-200 transition-[width] duration-500"
+                    style={{ width: `${completion}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-white/15 bg-white/8 p-2.5">
+                <p className="text-[11px] leading-4 text-slate-200/85">{statusMessage}</p>
+              </div>
+
+              <button
+                type="button"
+                onClick={toggleLandmarkMode}
+                className={`inline-flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-extrabold shadow-lg transition ${
+                  isAddingLandmark
+                    ? 'border-cyan-200/70 bg-cyan-300 text-slate-950'
+                    : 'border-rose-200/45 bg-rose-300 text-slate-950 hover:bg-rose-200'
+                }`}
+              >
+                <PinIcon />
+                {isAddingLandmark ? 'Cancel Moment' : 'Add Moment'}
+              </button>
+
+              {isAddingLandmark && (
+                <div className="rounded-lg border border-cyan-100/25 bg-cyan-100/10 p-2.5 text-xs leading-5 text-cyan-50">
+                  Tap the exact place on the map, then name the memory.
+                </div>
+              )}
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={undoLast}
+                disabled={history.length === 0}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-2.5 py-2 text-xs font-semibold text-sky-100 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <UndoIcon />
+                Undo
+              </button>
+              <button
+                type="button"
+                onClick={autoFill}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-2.5 py-2 text-xs font-semibold text-emerald-100 hover:bg-white/15"
+              >
+                <FillIcon />
+                Fill
+              </button>
+              <button
+                type="button"
+                onClick={saveScreenshot}
+                disabled={!canExportMap || isExportingMap}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-2.5 py-2 text-xs font-semibold text-fuchsia-100 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <SaveIcon />
+                PNG
+              </button>
+              <button
+                type="button"
+                onClick={shareScreenshot}
+                disabled={!canExportMap || isExportingMap}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-2.5 py-2 text-xs font-semibold text-violet-100 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ShareIcon />
+                Share
+              </button>
+              <button
+                type="button"
+                onClick={clearAll}
+                className="col-span-2 inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-2.5 py-2 text-xs font-semibold text-rose-100 hover:bg-white/15"
+              >
+                <ResetIcon />
+                Start over
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-100/85">Moments</p>
+                <span className="rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[11px] text-slate-200/80">{landmarks.length}</span>
+              </div>
+              {landmarks.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-white/20 bg-white/5 p-2.5 text-xs leading-5 text-slate-200/75">
+                  Add the first place worth remembering.
+                </div>
+              ) : (
+                <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
+                  {landmarks.map((landmark) => (
+                    <button
+                      key={landmark.id}
+                      type="button"
+                      onClick={() => setActiveLandmarkId(landmark.id)}
+                      className={`w-full rounded-lg border p-2.5 text-left transition ${
+                        activeLandmarkId === landmark.id
+                          ? 'border-rose-200/55 bg-rose-300/15'
+                          : 'border-white/15 bg-white/7 hover:bg-white/10'
+                      }`}
+                    >
+                      <span className="block truncate text-xs font-bold text-white">{landmark.title}</span>
+                      {landmark.note && <span className="mt-1 line-clamp-2 block text-[11px] leading-4 text-slate-200/75">{landmark.note}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </aside>
           </div>
         </motion.section>
       </div>
