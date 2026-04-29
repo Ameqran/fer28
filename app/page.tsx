@@ -43,6 +43,23 @@ interface RegionState extends RegionBlueprint {
 interface CloudProgressRow {
   colors: Record<string, string | null> | null;
   palette_colors: string[] | null;
+  landmarks: LandmarkMoment[] | null;
+}
+
+interface LandmarkMoment {
+  id: string;
+  x: number;
+  y: number;
+  title: string;
+  note: string;
+  createdAt: string;
+}
+
+interface LandmarkDraft {
+  x: number;
+  y: number;
+  title: string;
+  note: string;
 }
 
 interface DistrictMetaItem {
@@ -304,6 +321,20 @@ const isValidPaletteHexes = (value: unknown): value is string[] =>
   && value.length === BASE_PALETTE_COLORS.length
   && value.every((item) => typeof item === 'string' && isHexColor(item));
 
+const isValidLandmarks = (value: unknown): value is LandmarkMoment[] =>
+  Array.isArray(value)
+  && value.every(
+    (item) =>
+      item
+      && typeof item === 'object'
+      && typeof (item as LandmarkMoment).id === 'string'
+      && typeof (item as LandmarkMoment).x === 'number'
+      && typeof (item as LandmarkMoment).y === 'number'
+      && typeof (item as LandmarkMoment).title === 'string'
+      && typeof (item as LandmarkMoment).note === 'string'
+      && typeof (item as LandmarkMoment).createdAt === 'string',
+  );
+
 const loadStorageIndex = () => {
   try {
     const raw = window.localStorage.getItem(STORAGE_INDEX_KEY);
@@ -351,6 +382,11 @@ export default function HomePage() {
   const [isExportingMap, setIsExportingMap] = useState(false);
   const [isPaletteReady, setIsPaletteReady] = useState(false);
   const [hasOpenedGift, setHasOpenedGift] = useState(false);
+  const [landmarks, setLandmarks] = useState<LandmarkMoment[]>([]);
+  const [isAddingLandmark, setIsAddingLandmark] = useState(false);
+  const [landmarkDraft, setLandmarkDraft] = useState<LandmarkDraft | null>(null);
+  const [activeLandmarkId, setActiveLandmarkId] = useState<string | null>(null);
+  const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [isAuthLoading, setIsAuthLoading] = useState(false);
@@ -367,6 +403,7 @@ export default function HomePage() {
     [paletteColors],
   );
   const storageKey = useMemo(() => `${STORAGE_KEY_PREFIX}:${paletteSignature}`, [paletteSignature]);
+  const landmarksStorageKey = useMemo(() => `${storageKey}:landmarks`, [storageKey]);
 
   const completion = useMemo(() => {
     const correctCount = regions.filter((region) => region.currentColor?.toLowerCase() === region.defaultColor.toLowerCase()).length;
@@ -380,6 +417,7 @@ export default function HomePage() {
     setPaletteColors(nextPaletteColors);
     setRegions(createInitialRegions(nextPaletteColors));
     setHistory([]);
+    setLandmarks([]);
     setIsPaletteReady(true);
   }, []);
 
@@ -430,6 +468,26 @@ export default function HomePage() {
   }, [isPaletteReady, storageKey]);
 
   useEffect(() => {
+    if (!isPaletteReady) {
+      return;
+    }
+
+    const saved = window.localStorage.getItem(landmarksStorageKey);
+    if (!saved) {
+      setLandmarks([]);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(saved) as unknown;
+      setLandmarks(isValidLandmarks(parsed) ? parsed : []);
+    } catch {
+      window.localStorage.removeItem(landmarksStorageKey);
+      setLandmarks([]);
+    }
+  }, [isPaletteReady, landmarksStorageKey]);
+
+  useEffect(() => {
     if (!supabase || !user || !isPaletteReady || hasLoadedCloudRef.current) {
       return;
     }
@@ -442,7 +500,7 @@ export default function HomePage() {
       try {
         const { data, error } = await supabaseClient
           .from('map_progress')
-          .select('colors,palette_colors')
+          .select('colors,palette_colors,landmarks')
           .eq('user_id', user.id)
           .maybeSingle<CloudProgressRow>();
 
@@ -468,8 +526,9 @@ export default function HomePage() {
             currentColor: typeof data.colors?.[region.id] === 'string' ? data.colors[region.id] : null,
           })),
         );
+        setLandmarks(isValidLandmarks(data.landmarks) ? data.landmarks : []);
         lastSavedSnapshotRef.current = snapshot;
-        lastCloudSnapshotRef.current = snapshot;
+        lastCloudSnapshotRef.current = JSON.stringify({ colors: data.colors ?? {}, landmarks: data.landmarks ?? [] });
         setStatusMessage('Your saved birthday map is back.');
       } finally {
         setIsCloudLoading(false);
@@ -510,6 +569,18 @@ export default function HomePage() {
       }
     };
   }, [isPaletteReady, regions, storageKey]);
+
+  useEffect(() => {
+    if (!isPaletteReady) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(landmarksStorageKey, JSON.stringify(landmarks));
+    } catch {
+      // Ignore quota and storage exceptions so UI remains responsive.
+    }
+  }, [isPaletteReady, landmarks, landmarksStorageKey]);
 
   useEffect(
     () => () => {
@@ -560,6 +631,10 @@ export default function HomePage() {
       recordHistory(prev);
       return prev.map((region) => ({ ...region, currentColor: null }));
     });
+    setLandmarks([]);
+    setActiveLandmarkId(null);
+    setLandmarkDraft(null);
+    setIsAddingLandmark(false);
     setStatusMessage('The map is fresh again.');
   };
 
@@ -626,8 +701,8 @@ export default function HomePage() {
   };
 
   const saveScreenshot = async () => {
-    if (coloredCount === 0) {
-      setStatusMessage('Color at least one place before saving a picture.');
+    if (coloredCount === 0 && landmarks.length === 0) {
+      setStatusMessage('Color a place or mark a moment before saving a picture.');
       return;
     }
 
@@ -650,8 +725,8 @@ export default function HomePage() {
   };
 
   const shareScreenshot = async () => {
-    if (coloredCount === 0) {
-      setStatusMessage('Color at least one place before sharing your map.');
+    if (coloredCount === 0 && landmarks.length === 0) {
+      setStatusMessage('Color a place or mark a moment before sharing your map.');
       return;
     }
 
@@ -713,6 +788,58 @@ export default function HomePage() {
     });
   };
 
+  const createLandmarkDraft = (event: MouseEvent<HTMLDivElement>) => {
+    if (!isAddingLandmark || landmarkDraft) {
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * MAP_WIDTH;
+    const y = ((event.clientY - rect.top) / rect.height) * MAP_HEIGHT;
+    setLandmarkDraft({
+      x: Math.max(0, Math.min(MAP_WIDTH, x)),
+      y: Math.max(0, Math.min(MAP_HEIGHT, y)),
+      title: '',
+      note: '',
+    });
+    setStatusMessage('Add a name for this moment, then save it to the map.');
+  };
+
+  const saveLandmark = () => {
+    if (!landmarkDraft) {
+      return;
+    }
+
+    const title = landmarkDraft.title.trim();
+    const note = landmarkDraft.note.trim();
+
+    if (!title) {
+      setStatusMessage('Give this moment a short name before saving it.');
+      return;
+    }
+
+    const nextLandmark: LandmarkMoment = {
+      id: `moment-${Date.now()}`,
+      x: landmarkDraft.x,
+      y: landmarkDraft.y,
+      title,
+      note,
+      createdAt: new Date().toISOString(),
+    };
+
+    setLandmarks((prev) => [...prev, nextLandmark].slice(-24));
+    setActiveLandmarkId(nextLandmark.id);
+    setLandmarkDraft(null);
+    setIsAddingLandmark(false);
+    setStatusMessage(`${title} is marked on your Portugal map.`);
+  };
+
+  const removeLandmark = (id: string) => {
+    setLandmarks((prev) => prev.filter((landmark) => landmark.id !== id));
+    setActiveLandmarkId(null);
+    setStatusMessage('Moment removed from the map.');
+  };
+
   const signIn = async () => {
     if (!supabase) {
       setStatusMessage('Cloud save is not ready yet.');
@@ -753,7 +880,8 @@ export default function HomePage() {
       return;
     }
 
-    const snapshot = JSON.stringify(serializeColors(regions));
+    const colors = serializeColors(regions);
+    const snapshot = JSON.stringify({ colors, landmarks });
     if (snapshot === lastCloudSnapshotRef.current) {
       setStatusMessage('Your map is already saved.');
       return;
@@ -762,8 +890,9 @@ export default function HomePage() {
     setIsCloudSaving(true);
     const { error } = await supabase.from('map_progress').upsert({
       user_id: user.id,
-      colors: JSON.parse(snapshot) as Record<string, string | null>,
+      colors,
       palette_colors: paletteColors.map((color) => color.hex),
+      landmarks,
       updated_at: new Date().toISOString(),
     });
     setIsCloudSaving(false);
@@ -789,7 +918,7 @@ export default function HomePage() {
     setStatusMessage('Signed out. Your map is still saved on this device.');
   };
 
-  const canExportMap = coloredCount > 0;
+  const canExportMap = coloredCount > 0 || landmarks.length > 0;
 
   if (!hasOpenedGift) {
     return (
@@ -877,149 +1006,20 @@ export default function HomePage() {
               <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-200/90">Fer&apos;s birthday gift</p>
               <h1 className="font-[var(--font-heading)] text-2xl font-bold leading-tight text-white md:text-3xl">Your Portugal Map</h1>
             </div>
-            <span className="rounded-full border border-white/20 bg-slate-950/35 px-3 py-1 text-xs font-semibold text-cyan-100">
-              {completion}% complete
-            </span>
           </div>
         </motion.div>
       </div>
 
-      <div className="mx-auto grid max-w-[86rem] gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <motion.aside
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.6 }}
-          className="order-2 rounded-2xl border border-white/20 bg-white/10 p-4 shadow-glow backdrop-blur-xl lg:sticky lg:top-4 lg:self-start"
-        >
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-[var(--font-heading)] text-2xl font-semibold text-white">Your Map</h2>
-            <span className="rounded-full bg-slate-900/45 px-3 py-1 text-xs font-semibold text-cyan-100">{completion}% complete</span>
-          </div>
-
-          <div className="mb-4 h-2 overflow-hidden rounded-full bg-slate-900/45">
-            <motion.div
-              className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-violet-300 to-fuchsia-300"
-              animate={{ width: `${completion}%` }}
-              transition={{ type: 'spring', stiffness: 110, damping: 20 }}
-            />
-          </div>
-
-          <div className="mb-4 rounded-xl border border-white/20 bg-black/20 p-3">
-            {user ? (
-              <div className="space-y-3">
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90">
-                    {isCloudLoading ? 'Loading your map' : isCloudSaving ? 'Saving your map' : 'Signed in'}
-                  </p>
-                  <p className="truncate text-xs text-slate-200/80">{user.email}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={saveProgress}
-                  disabled={isCloudLoading || isCloudSaving}
-                  className="w-full rounded-lg border border-emerald-200/35 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isCloudSaving ? 'Saving...' : 'Save Map'}
-                </button>
-                <button
-                  type="button"
-                  onClick={signOut}
-                  disabled={isAuthLoading}
-                  className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Sign Out
-                </button>
-              </div>
-            ) : (
-              <form
-                className="space-y-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  signIn();
-                }}
-              >
-                <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90" htmlFor="email">
-                  Keep your map
-                </label>
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="email@example.com"
-                  className="w-full rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-cyan-200/70"
-                />
-                <button
-                  type="submit"
-                  disabled={isAuthLoading}
-                  className="w-full rounded-lg border border-cyan-200/35 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isAuthLoading ? 'Sending...' : 'Send Sign-In Link'}
-                </button>
-              </form>
-            )}
-          </div>
-
-          <p className="mb-4 rounded-xl border border-white/20 bg-black/20 px-3 py-2 text-xs leading-relaxed text-slate-200/95">{statusMessage}</p>
-
-          <div className="mb-4 grid grid-cols-2 gap-2">
-            <motion.button
-              whileTap={{ scale: 0.95 }}
-              onClick={clearAll}
-              className="rounded-xl border border-rose-200/35 bg-rose-500/20 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-500/30"
-            >
-              Start Over
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.95 }}
-              onClick={autoFill}
-              className="rounded-xl border border-emerald-200/35 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/30"
-            >
-              Fill Map
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.95 }}
-              onClick={undoLast}
-              disabled={history.length === 0}
-              className="rounded-xl border border-sky-200/35 bg-sky-500/20 px-3 py-2 text-sm font-semibold text-sky-100 transition-opacity hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Undo
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.95 }}
-              onClick={saveScreenshot}
-              disabled={!canExportMap || isExportingMap}
-              className="rounded-xl border border-fuchsia-200/35 bg-fuchsia-500/20 px-3 py-2 text-sm font-semibold text-fuchsia-100 transition-opacity hover:bg-fuchsia-500/30 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <SaveIcon />
-                {isExportingMap ? 'Working...' : 'Save Picture'}
-              </span>
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.95 }}
-              onClick={shareScreenshot}
-              disabled={!canExportMap || isExportingMap}
-              className="col-span-2 rounded-xl border border-violet-200/35 bg-violet-500/20 px-3 py-2 text-sm font-semibold text-violet-100 transition-opacity hover:bg-violet-500/30 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <span className="inline-flex items-center justify-center gap-1.5">
-                <ShareIcon />
-                Share
-              </span>
-            </motion.button>
-          </div>
-
-        </motion.aside>
-
+      <div className="mx-auto max-w-[86rem]">
         <motion.section
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.65, ease: 'easeOut' }}
-          className="relative order-1 rounded-2xl border border-white/20 bg-white/10 p-3 shadow-glow backdrop-blur-xl md:p-5"
+          className="relative rounded-2xl border border-white/20 bg-white/10 p-3 shadow-glow backdrop-blur-xl md:p-5"
         >
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-[var(--font-heading)] text-xl font-semibold text-white md:text-2xl">Portugal, for you</h3>
-            <p className="text-xs uppercase tracking-[0.22em] text-cyan-100/90">click a place to color it</p>
+            <p className="text-xs uppercase tracking-[0.22em] text-cyan-100/90">color places / mark moments</p>
           </div>
 
           <div
@@ -1030,6 +1030,180 @@ export default function HomePage() {
             }}
             className="relative mx-auto max-w-[900px] overflow-hidden rounded-2xl border border-white/15 bg-slate-950/15"
           >
+            <div data-export-ignore="true" className="pointer-events-none absolute left-3 top-3 z-30">
+              <div className="rounded-full border border-white/20 bg-slate-950/75 px-3 py-2 shadow-xl backdrop-blur">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/80">Progress</p>
+                <p className="text-sm font-bold text-white">{completion}% · {landmarks.length} moments</p>
+              </div>
+            </div>
+
+            <div data-export-ignore="true" className="absolute right-3 top-3 z-40 flex items-center gap-2">
+              <motion.button
+                whileTap={{ scale: 0.96 }}
+                type="button"
+                onClick={() => {
+                  setIsAddingLandmark((prev) => !prev);
+                  setLandmarkDraft(null);
+                  setIsActionsOpen(false);
+                  setStatusMessage(isAddingLandmark ? 'Moment marking paused.' : 'Click the map where this memory belongs.');
+                }}
+                className={`rounded-full border px-4 py-2 text-sm font-extrabold shadow-xl backdrop-blur transition ${
+                  isAddingLandmark
+                    ? 'border-cyan-200/70 bg-cyan-300 text-slate-950'
+                    : 'border-white/25 bg-white/90 text-slate-950 hover:bg-cyan-100'
+                }`}
+              >
+                {isAddingLandmark ? 'Cancel' : '+ Moment'}
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.96 }}
+                type="button"
+                onClick={() => setIsActionsOpen((prev) => !prev)}
+                className="rounded-full border border-white/25 bg-slate-950/75 px-3 py-2 text-sm font-bold text-white shadow-xl backdrop-blur hover:bg-slate-900/90"
+                aria-label="Open map actions"
+              >
+                ···
+              </motion.button>
+            </div>
+
+            {isActionsOpen && (
+              <div
+                data-export-ignore="true"
+                className="absolute right-3 top-16 z-40 w-[min(20rem,calc(100%-1.5rem))] rounded-2xl border border-white/25 bg-slate-950/90 p-3 text-left shadow-2xl backdrop-blur"
+              >
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90">Map actions</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-200/80">{statusMessage}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsActionsOpen(false)}
+                    className="rounded-full border border-white/15 bg-white/10 px-2 py-1 text-xs font-bold text-white hover:bg-white/15"
+                    aria-label="Close map actions"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={undoLast}
+                    disabled={history.length === 0}
+                    className="rounded-lg border border-sky-200/35 bg-sky-500/20 px-3 py-2 text-sm font-semibold text-sky-100 hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Undo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={autoFill}
+                    className="rounded-lg border border-emerald-200/35 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/30"
+                  >
+                    Fill Map
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveScreenshot}
+                    disabled={!canExportMap || isExportingMap}
+                    className="rounded-lg border border-fuchsia-200/35 bg-fuchsia-500/20 px-3 py-2 text-sm font-semibold text-fuchsia-100 hover:bg-fuchsia-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <span className="inline-flex items-center gap-1.5">
+                      <SaveIcon />
+                      Picture
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={shareScreenshot}
+                    disabled={!canExportMap || isExportingMap}
+                    className="rounded-lg border border-violet-200/35 bg-violet-500/20 px-3 py-2 text-sm font-semibold text-violet-100 hover:bg-violet-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <span className="inline-flex items-center gap-1.5">
+                      <ShareIcon />
+                      Share
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearAll}
+                    className="col-span-2 rounded-lg border border-rose-200/35 bg-rose-500/20 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-500/30"
+                  >
+                    Start Over
+                  </button>
+                </div>
+
+                <div className="mt-3 rounded-xl border border-white/15 bg-white/5 p-3">
+                  {user ? (
+                    <div className="space-y-2">
+                      <p className="truncate text-xs text-slate-200/80">{user.email}</p>
+                      <button
+                        type="button"
+                        onClick={saveProgress}
+                        disabled={isCloudLoading || isCloudSaving}
+                        className="w-full rounded-lg border border-emerald-200/35 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isCloudSaving ? 'Saving...' : 'Save Map'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={signOut}
+                        disabled={isAuthLoading}
+                        className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Sign Out
+                      </button>
+                    </div>
+                  ) : (
+                    <form
+                      className="space-y-2"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        signIn();
+                      }}
+                    >
+                      <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90" htmlFor="email">
+                        Keep your map
+                      </label>
+                      <input
+                        id="email"
+                        type="email"
+                        value={email}
+                        onChange={(event) => setEmail(event.target.value)}
+                        placeholder="email@example.com"
+                        className="w-full rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-cyan-200/70"
+                      />
+                      <button
+                        type="submit"
+                        disabled={isAuthLoading}
+                        className="w-full rounded-lg border border-cyan-200/35 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isAuthLoading ? 'Sending...' : 'Send Sign-In Link'}
+                      </button>
+                    </form>
+                  )}
+                </div>
+
+                {landmarks.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {landmarks.slice(-4).map((landmark) => (
+                      <button
+                        key={landmark.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveLandmarkId(landmark.id);
+                          setIsActionsOpen(false);
+                        }}
+                        className="max-w-full truncate rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-xs text-slate-100 hover:bg-white/15"
+                      >
+                        {landmark.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="relative z-10">
               <svg
                 viewBox={MAP_VIEWBOX}
@@ -1169,6 +1343,130 @@ export default function HomePage() {
                 })}
               </svg>
             </div>
+
+            <div className="pointer-events-none absolute inset-0 z-20">
+              {landmarks.map((landmark) => {
+                const isActive = activeLandmarkId === landmark.id;
+                return (
+                  <button
+                    key={landmark.id}
+                    type="button"
+                    onClick={() => setActiveLandmarkId(isActive ? null : landmark.id)}
+                    className="pointer-events-auto absolute -translate-x-1/2 -translate-y-full"
+                    style={{
+                      left: `${(landmark.x / MAP_WIDTH) * 100}%`,
+                      top: `${(landmark.y / MAP_HEIGHT) * 100}%`,
+                    }}
+                    aria-label={`Open moment ${landmark.title}`}
+                  >
+                    <span className="relative flex h-9 w-9 items-center justify-center rounded-full border border-white/55 bg-rose-300 text-sm font-black text-slate-950 shadow-[0_12px_30px_rgba(251,113,133,0.35)]">
+                      <span className="absolute inset-0 animate-ping rounded-full bg-rose-200/30" />
+                      <span className="relative">✦</span>
+                    </span>
+                  </button>
+                );
+              })}
+
+              {activeLandmarkId && (
+                <div
+                  className="pointer-events-auto absolute z-30 w-56 -translate-x-1/2 rounded-2xl border border-white/25 bg-slate-950/90 p-3 text-left shadow-2xl backdrop-blur"
+                  style={{
+                    left: `${((landmarks.find((landmark) => landmark.id === activeLandmarkId)?.x ?? MAP_WIDTH / 2) / MAP_WIDTH) * 100}%`,
+                    top: `calc(${((landmarks.find((landmark) => landmark.id === activeLandmarkId)?.y ?? MAP_HEIGHT / 2) / MAP_HEIGHT) * 100}% + 12px)`,
+                  }}
+                >
+                  {(() => {
+                    const landmark = landmarks.find((item) => item.id === activeLandmarkId);
+                    if (!landmark) {
+                      return null;
+                    }
+
+                    return (
+                      <>
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-rose-100/90">Moment</p>
+                        <h4 className="mt-1 font-[var(--font-heading)] text-xl font-bold text-white">{landmark.title}</h4>
+                        {landmark.note && <p className="mt-2 text-sm leading-5 text-slate-200/90">{landmark.note}</p>}
+                        <button
+                          type="button"
+                          onClick={() => removeLandmark(landmark.id)}
+                          className="mt-3 text-xs font-semibold text-rose-100/80 hover:text-rose-100"
+                        >
+                          Remove
+                        </button>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+
+            {isAddingLandmark && (
+              <div
+                data-export-ignore="true"
+                onClick={createLandmarkDraft}
+                className="absolute inset-0 z-30 cursor-crosshair bg-cyan-950/10"
+              />
+            )}
+
+            {landmarkDraft && (
+              <>
+                <div
+                  data-export-ignore="true"
+                  className="pointer-events-none absolute z-40 -translate-x-1/2 -translate-y-full"
+                  style={{
+                    left: `${(landmarkDraft.x / MAP_WIDTH) * 100}%`,
+                    top: `${(landmarkDraft.y / MAP_HEIGHT) * 100}%`,
+                  }}
+                >
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full border border-white/60 bg-cyan-300 text-sm font-black text-slate-950 shadow-[0_12px_30px_rgba(34,211,238,0.35)]">
+                    +
+                  </span>
+                </div>
+                <div
+                  data-export-ignore="true"
+                  className="absolute z-40 w-[min(22rem,calc(100%-2rem))] -translate-x-1/2 rounded-2xl border border-white/25 bg-slate-950/92 p-4 text-left shadow-2xl backdrop-blur"
+                  style={{
+                    left: `${(landmarkDraft.x / MAP_WIDTH) * 100}%`,
+                    top: `calc(${(landmarkDraft.y / MAP_HEIGHT) * 100}% + 14px)`,
+                  }}
+                >
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100/90">Mark this moment</p>
+                  <input
+                    value={landmarkDraft.title}
+                    onChange={(event) => setLandmarkDraft((prev) => (prev ? { ...prev, title: event.target.value } : prev))}
+                    maxLength={34}
+                    placeholder="Moment name"
+                    className="mt-3 w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white outline-none placeholder:text-slate-400 focus:border-cyan-200/70"
+                  />
+                  <textarea
+                    value={landmarkDraft.note}
+                    onChange={(event) => setLandmarkDraft((prev) => (prev ? { ...prev, note: event.target.value } : prev))}
+                    maxLength={120}
+                    placeholder="A tiny note, memory, or reason this place matters"
+                    className="mt-2 min-h-20 w-full resize-none rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-cyan-200/70"
+                  />
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLandmarkDraft(null);
+                        setIsAddingLandmark(false);
+                      }}
+                      className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/15"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveLandmark}
+                      className="rounded-lg border border-rose-200/45 bg-rose-300 px-3 py-2 text-sm font-extrabold text-slate-950 hover:bg-rose-200"
+                    >
+                      Save Moment
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
 
             {tooltip && (
               <div
