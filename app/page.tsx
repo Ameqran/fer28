@@ -342,7 +342,6 @@ const REGION_BLUEPRINTS: RegionBlueprint[] = DISTRICT_META.map((meta) => {
 
 const STORAGE_KEY_PREFIX = 'fer28-portugal-map-real-v3';
 const STORAGE_INDEX_KEY = `${STORAGE_KEY_PREFIX}:index`;
-const GIFT_OPENED_KEY = `${STORAGE_KEY_PREFIX}:gift-opened`;
 const STORAGE_MAX_ENTRIES = 24;
 const STORAGE_WRITE_DEBOUNCE_MS = 220;
 
@@ -443,7 +442,7 @@ interface HomePageProps {
 
 const getMapRedirectUrl = () => {
   const basePath = window.location.pathname.startsWith('/fer28') ? '/fer28' : '';
-  return `${window.location.origin}${basePath}/map`;
+  return `${window.location.origin}${basePath}/map/`;
 };
 
 export default function HomePage({ startOnMap = false }: HomePageProps) {
@@ -498,23 +497,12 @@ export default function HomePage({ startOnMap = false }: HomePageProps) {
   }, []);
 
   useEffect(() => {
-    if (startOnMap) {
-      window.localStorage.setItem(GIFT_OPENED_KEY, 'true');
-      return;
-    }
-
-    if (window.location.hash.includes('access_token')) {
+    if (!startOnMap && window.location.hash.includes('access_token')) {
       window.location.replace(`${getMapRedirectUrl()}${window.location.hash}`);
-      return;
-    }
-
-    if (window.localStorage.getItem(GIFT_OPENED_KEY) === 'true') {
-      setHasOpenedGift(true);
     }
   }, [startOnMap]);
 
   const openGift = () => {
-    window.localStorage.setItem(GIFT_OPENED_KEY, 'true');
     setHasOpenedGift(true);
     router.push('/map');
   };
@@ -526,18 +514,12 @@ export default function HomePage({ startOnMap = false }: HomePageProps) {
 
     supabase.auth.getUser().then(({ data }) => {
       setUser(data.user);
-      if (data.user) {
-        openGift();
-      }
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
-      if (session?.user) {
-        openGift();
-      }
       hasLoadedCloudRef.current = false;
       lastCloudSnapshotRef.current = '';
     });
@@ -1119,9 +1101,18 @@ export default function HomePage({ startOnMap = false }: HomePageProps) {
           className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 shadow-glow backdrop-blur-xl md:px-5"
         >
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="min-w-0">
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+              <button
+                type="button"
+                onClick={() => router.push('/')}
+                className="w-fit rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:bg-white/15"
+              >
+                Gift note
+              </button>
+              <div className="min-w-0">
               <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-200/90">Fer&apos;s birthday gift</p>
               <h1 className="font-[var(--font-heading)] text-2xl font-bold leading-tight text-white md:text-3xl">Your Portugal Map</h1>
+              </div>
             </div>
             <div className="w-full md:w-auto md:max-w-[28rem]">
               {user ? (
