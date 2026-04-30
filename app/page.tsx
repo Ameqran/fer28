@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import { toBlob } from 'html-to-image';
 import type { User } from '@supabase/supabase-js';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { ISLAND_INSET_FRAMES, ISLAND_PATHS } from './portugalIslandPaths';
 import { DISTRICT_PATHS } from './portugalDistrictPaths';
@@ -341,6 +342,7 @@ const REGION_BLUEPRINTS: RegionBlueprint[] = DISTRICT_META.map((meta) => {
 
 const STORAGE_KEY_PREFIX = 'fer28-portugal-map-real-v3';
 const STORAGE_INDEX_KEY = `${STORAGE_KEY_PREFIX}:index`;
+const GIFT_OPENED_KEY = `${STORAGE_KEY_PREFIX}:gift-opened`;
 const STORAGE_MAX_ENTRIES = 24;
 const STORAGE_WRITE_DEBOUNCE_MS = 220;
 
@@ -435,7 +437,17 @@ const serializeColors = (regions: RegionState[]): Record<string, string | null> 
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), Math.max(min, max));
 
-export default function HomePage() {
+interface HomePageProps {
+  startOnMap?: boolean;
+}
+
+const getMapRedirectUrl = () => {
+  const basePath = window.location.pathname.startsWith('/fer28') ? '/fer28' : '';
+  return `${window.location.origin}${basePath}/map`;
+};
+
+export default function HomePage({ startOnMap = false }: HomePageProps) {
+  const router = useRouter();
   const [paletteColors, setPaletteColors] = useState<PaletteColor[]>(BASE_PALETTE_COLORS);
   const [regions, setRegions] = useState<RegionState[]>(() => createInitialRegions(BASE_PALETTE_COLORS));
   const [history, setHistory] = useState<Array<Record<string, string | null>>>([]);
@@ -445,7 +457,7 @@ export default function HomePage() {
   const [celebrated, setCelebrated] = useState(false);
   const [isExportingMap, setIsExportingMap] = useState(false);
   const [isPaletteReady, setIsPaletteReady] = useState(false);
-  const [hasOpenedGift, setHasOpenedGift] = useState(false);
+  const [hasOpenedGift, setHasOpenedGift] = useState(startOnMap);
   const [landmarks, setLandmarks] = useState<LandmarkMoment[]>([]);
   const [isAddingLandmark, setIsAddingLandmark] = useState(false);
   const [landmarkDraft, setLandmarkDraft] = useState<LandmarkDraft | null>(null);
@@ -486,18 +498,46 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    if (startOnMap) {
+      window.localStorage.setItem(GIFT_OPENED_KEY, 'true');
+      return;
+    }
+
+    if (window.location.hash.includes('access_token')) {
+      window.location.replace(`${getMapRedirectUrl()}${window.location.hash}`);
+      return;
+    }
+
+    if (window.localStorage.getItem(GIFT_OPENED_KEY) === 'true') {
+      setHasOpenedGift(true);
+    }
+  }, [startOnMap]);
+
+  const openGift = () => {
+    window.localStorage.setItem(GIFT_OPENED_KEY, 'true');
+    setHasOpenedGift(true);
+    router.push('/map');
+  };
+
+  useEffect(() => {
     if (!supabase) {
       return;
     }
 
     supabase.auth.getUser().then(({ data }) => {
       setUser(data.user);
+      if (data.user) {
+        openGift();
+      }
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      if (session?.user) {
+        openGift();
+      }
       hasLoadedCloudRef.current = false;
       lastCloudSnapshotRef.current = '';
     });
@@ -930,7 +970,7 @@ export default function HomePage() {
     }
 
     setIsAuthLoading(true);
-    const redirectUrl = `${window.location.origin}${window.location.pathname}`;
+    const redirectUrl = getMapRedirectUrl();
     const { error } = await supabase.auth.signInWithOtp({
       email: trimmedEmail,
       options: {
@@ -1038,7 +1078,7 @@ export default function HomePage() {
             </div>
             <button
               type="button"
-              onClick={() => setHasOpenedGift(true)}
+              onClick={openGift}
               className="mt-7 rounded-xl border border-cyan-200/45 bg-cyan-300 px-5 py-3 text-sm font-extrabold text-slate-950 shadow-[0_16px_40px_rgba(34,211,238,0.22)] transition hover:bg-cyan-200"
             >
               Open your Portugal map
